@@ -150,20 +150,18 @@ pub const MAX_DUST_SWEEP_AMOUNT: i128 = 100_000_000;
 pub const MAX_INVOICE_ID_STRING_LEN: u32 = 32;
 
 /// Minimum instance storage TTL extension horizon for time-sensitive escrow entries.
-
 ///
 /// `bump_ttl` extends instance-storage entries to avoid rent/archival edge cases when
 /// maturity/claim locks are far in the future.
 ///
 /// Named as a constant so operators can reason about and audit the threshold.
-pub const INSTANCE_TTL_MIN_EXTENSION_SECS: u64 = 60 * 60; // 1h
+pub const INSTANCE_TTL_MIN_EXTENSION_LEDGERS: u32 = 60 * 60; // Approx. 1h at 1 ledger/sec.
 
 /// Minimum persistent storage TTL extension horizon for per-investor allowlist entries.
 ///
 /// When the escrow uses the allowlist gate, investor funding depends on persistent entries.
 /// Extending persistent allowlist TTL reduces the risk of silent allowlist disablement.
-pub const PERSISTENT_TTL_MIN_EXTENSION_SECS: u64 = 60 * 60; // 1h
-
+pub const PERSISTENT_TTL_MIN_EXTENSION_LEDGERS: u32 = 60 * 60; // Approx. 1h at 1 ledger/sec.
 
 // --- Storage keys ---
 
@@ -310,12 +308,16 @@ pub struct YieldTier {
     pub yield_bps: i64,
 }
 
-/// Captured at the first ledger transition to **funded** so partial settlement / claims can use a
-/// stable total principal and target. **Immutable** once written.
+/// Captured exactly once at the first ledger transition to **funded** so settlement and claims can
+/// use a stable total principal and target. If the threshold-crossing deposit overshoots
+/// [`InvoiceEscrow::funding_target`], [`FundingCloseSnapshot::total_principal`] records the full
+/// credited [`InvoiceEscrow::funded_amount`] at close and becomes the pro-rata denominator.
+/// **Immutable** once written.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct FundingCloseSnapshot {
-    /// Sum of principal credited when the invoice became funded (`funded_amount` at close), including overflow past target.
+    /// Sum of principal credited when the invoice became funded (`funded_amount` at close),
+    /// including over-funding past target.
     pub total_principal: i128,
     pub funding_target: i128,
     pub closed_at_ledger_timestamp: u64,
@@ -899,9 +901,7 @@ impl LiquifactEscrow {
     /// Optional cap on total principal for a single investor address.
     /// Absent ⇒ unlimited. Enforced on every deposit.
     pub fn get_max_per_investor_cap(env: Env) -> Option<i128> {
-        env.storage()
-            .instance()
-            .get(&DataKey::MaxPerInvestorCap)
+        env.storage().instance().get(&DataKey::MaxPerInvestorCap)
     }
 
     /// Distinct funders counted so far (each address counted once when it first receives principal).
@@ -1019,6 +1019,10 @@ impl LiquifactEscrow {
     }
 
     /// Pro-rata denominator captured when the escrow first became **funded**; [`None`] until then.
+    ///
+    /// The snapshot is write-once. It records the full `funded_amount` at the threshold-crossing
+    /// funding call, including any over-funding past `funding_target`, plus the close ledger time
+    /// and sequence used by off-chain auditors.
     pub fn get_funding_close_snapshot(env: Env) -> Option<FundingCloseSnapshot> {
         env.storage().instance().get(&DataKey::FundingCloseSnapshot)
     }
@@ -1195,7 +1199,7 @@ impl LiquifactEscrow {
         let n = investors.len();
         assert!(n > 0, "investors vector must be non-empty");
         assert!(
-            (n as u32) <= MAX_INVESTOR_ALLOWLIST_BATCH,
+            n <= MAX_INVESTOR_ALLOWLIST_BATCH,
             "investors vector length exceeds MAX_INVESTOR_ALLOWLIST_BATCH"
         );
 
@@ -1257,6 +1261,54 @@ impl LiquifactEscrow {
         .publish(&env);
 
         escrow
+    }
+
+    /// Lower the configured distinct-investor cap while the escrow is still open.
+    ///
+    /// This is admin-only and intentionally cannot raise a cap or impose one on an unlimited
+    /// escrow. Existing investors remain able to add principal after the cap is lowered; only new
+    /// investor addresses are blocked once `UniqueFunderCount >= new_cap`.
+    ///
+    /// # Panics
+    /// - If the escrow is not open.
+    /// - If no unique-investor cap was configured at initialization.
+    /// - If `new_cap` is not strictly lower than the current cap.
+    /// - If `new_cap` is below the current unique funder count.
+    pub fn lower_max_unique_investors(env: Env, new_cap: u32) -> u32 {
+        let escrow = Self::get_escrow(env.clone());
+        escrow.admin.require_auth();
+
+        assert!(escrow.status == 0, "Cap can only be lowered in Open state");
+
+        let old_cap: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::MaxUniqueInvestorsCap)
+            .unwrap_or_else(|| panic!("no investor cap configured"));
+        let unique_count = Self::get_unique_funder_count(env.clone());
+
+        assert!(
+            new_cap < old_cap,
+            "new cap must be strictly lower than current cap"
+        );
+        assert!(
+            new_cap >= unique_count,
+            "new cap cannot be below current unique funder count"
+        );
+
+        env.storage()
+            .instance()
+            .set(&DataKey::MaxUniqueInvestorsCap, &new_cap);
+
+        MaxUniqueInvestorsCapLowered {
+            name: symbol_short!("inv_cap"),
+            invoice_id: escrow.invoice_id.clone(),
+            old_cap,
+            new_cap,
+        }
+        .publish(&env);
+
+        new_cap
     }
 
     /// Validate the stored schema version and apply a migration if one is implemented.
@@ -1483,9 +1535,6 @@ impl LiquifactEscrow {
             }
         }
 
-        let next_contribution = prev
-            .checked_add(amount)
-            .expect("investor contribution overflow");
         env.storage()
             .instance()
             .set(&contribution_key, &new_contribution);
@@ -1795,55 +1844,28 @@ impl LiquifactEscrow {
         // - ADR-007: storage key evolution policy (additive changes / key semantics).
         // - docs/escrow-ledger-time.md: all gating uses `Env::ledger().timestamp()` with `>=`.
 
-        // Instance storage keys required for settlement + gating behavior.
-        let k_escrow: DataKey = DataKey::Escrow;
-        env.storage().instance().extend_ttl(&k_escrow, &INSTANCE_TTL_MIN_EXTENSION_SECS);
+        env.storage().instance().extend_ttl(
+            INSTANCE_TTL_MIN_EXTENSION_LEDGERS,
+            INSTANCE_TTL_MIN_EXTENSION_LEDGERS,
+        );
 
-        let k_version: DataKey = DataKey::Version;
-        env.storage().instance().extend_ttl(&k_version, &INSTANCE_TTL_MIN_EXTENSION_SECS);
-
-        let k_legal_hold: DataKey = DataKey::LegalHold;
-        env.storage().instance().extend_ttl(&k_legal_hold, &INSTANCE_TTL_MIN_EXTENSION_SECS);
-
-        let k_allowlist_active: DataKey = DataKey::AllowlistActive;
-        env.storage()
-            .instance()
-            .extend_ttl(&k_allowlist_active, &INSTANCE_TTL_MIN_EXTENSION_SECS);
-
-        let k_snapshot: DataKey = DataKey::FundingCloseSnapshot;
-        env.storage()
-            .instance()
-            .extend_ttl(&k_snapshot, &INSTANCE_TTL_MIN_EXTENSION_SECS);
-
-        // Investor contribution + claim gates are instance keys (per investor).
-        // We cannot enumerate contributors on-chain; extend only what the caller provides.
-        for addr in allowlisted.iter() {
-            // Contribution + claim-gate entries are instance-scoped and per-investor.
-            let k_contrib = DataKey::InvestorContribution(addr.clone());
-            env.storage()
-                .instance()
-                .extend_ttl(&k_contrib, &INSTANCE_TTL_MIN_EXTENSION_SECS);
-
-            let k_claim_not_before = DataKey::InvestorClaimNotBefore(addr.clone());
-            env.storage()
-                .instance()
-                .extend_ttl(&k_claim_not_before, &INSTANCE_TTL_MIN_EXTENSION_SECS);
-        }
-
+        // Instance storage TTL is contract-wide under Soroban SDK 25. The call above covers
+        // Escrow, Version, LegalHold, snapshots, and all per-investor instance keys.
 
         // Persistent allowlist entries.
         for addr in allowlisted.iter() {
             let k = DataKey::InvestorAllowlisted(addr.clone());
-            env.storage()
-                .persistent()
-                .extend_ttl(&k, &PERSISTENT_TTL_MIN_EXTENSION_SECS);
+            env.storage().persistent().extend_ttl(
+                &k,
+                PERSISTENT_TTL_MIN_EXTENSION_LEDGERS,
+                PERSISTENT_TTL_MIN_EXTENSION_LEDGERS,
+            );
         }
     }
 
     pub fn transfer_admin(env: Env, new_admin: Address) -> InvoiceEscrow {
         // env.clone(): env is used again after this call for storage set and publish.
         let mut escrow = Self::get_escrow(env.clone());
-
 
         escrow.admin.require_auth();
 
