@@ -8,7 +8,7 @@
 )]
 #[allow(unused_imports)]
 use super::{
-    AttestationDigestRevoked, DataKey, FundingTargetUpdated, LiquifactEscrow,
+    AttestationDigestRevoked, DataKey, EscrowFunded, FundingTargetUpdated, LiquifactEscrow,
     LiquifactEscrowClient, YieldTier, MAX_ATTESTATION_APPEND_ENTRIES, MAX_DUST_SWEEP_AMOUNT,
     SCHEMA_VERSION,
 };
@@ -16,7 +16,7 @@ use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Events, Ledger as _},
     token::{StellarAssetClient, TokenClient},
-    Address, Env, Event, String, Vec as SorobanVec,
+    Address, Env, Event, String, Val, Vec as SorobanVec,
 };
 
 // Focused test tree for escrow behavior. Shared helpers live here so feature

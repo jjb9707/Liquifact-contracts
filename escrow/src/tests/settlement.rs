@@ -384,8 +384,6 @@ fn settle_blocked_by_legal_hold() {
     client.settle();
 }
 
-// Duplicate of settle_on_open_escrow_panics (line ~671, includes expected message).
-// Removed to resolve E0428.
 
 #[test]
 #[should_panic]
@@ -396,9 +394,7 @@ fn test_claim_blocked_until_commitment_ledger_time() {
     let admin = Address::generate(&env);
     let sme = Address::generate(&env);
     let inv = Address::generate(&env);
-    let token = install_stellar_asset_token(&env);
-    let (tok, tre) = (token.id.clone(), Address::generate(&env));
-
+    let (tok, treasury) = free_addresses(&env);
     client.init(
         &admin,
         &String::from_str(&env, "LOCK001"),
@@ -408,7 +404,7 @@ fn test_claim_blocked_until_commitment_ledger_time() {
         &0u64,
         &tok,
         &None,
-        &tre,
+        &treasury,
         &None,
         &None,
         &None,
@@ -427,9 +423,7 @@ fn test_claim_succeeds_after_commitment_and_settle() {
     let admin = Address::generate(&env);
     let sme = Address::generate(&env);
     let inv = Address::generate(&env);
-    let token = install_stellar_asset_token(&env);
-    let (tok, tre) = (token.id.clone(), Address::generate(&env));
-
+    let (tok, treasury) = free_addresses(&env);
     client.init(
         &admin,
         &String::from_str(&env, "LOCK002"),
@@ -439,7 +433,7 @@ fn test_claim_succeeds_after_commitment_and_settle() {
         &0u64,
         &tok,
         &None,
-        &tre,
+        &treasury,
         &None,
         &None,
         &None,
@@ -460,9 +454,7 @@ fn test_claim_gating_exact_timestamp() {
     let admin = Address::generate(&env);
     let sme = Address::generate(&env);
     let inv = Address::generate(&env);
-    let token = install_stellar_asset_token(&env);
-    let (tok, tre) = (token.id.clone(), Address::generate(&env));
-
+    let (tok, treasury) = free_addresses(&env);
 
     env.ledger().set_timestamp(1000);
 
@@ -475,7 +467,7 @@ fn test_claim_gating_exact_timestamp() {
         &0u64,
         &tok,
         &None,
-        &tre,
+        &treasury,
         &None,
         &None,
         &None,
@@ -510,9 +502,7 @@ fn test_claim_gating_with_multiple_investors() {
     let sme = Address::generate(&env);
     let inv1 = Address::generate(&env);
     let inv2 = Address::generate(&env);
-    let token = install_stellar_asset_token(&env);
-    let (tok, tre) = (token.id.clone(), Address::generate(&env));
-
+    let (tok, treasury) = free_addresses(&env);
 
     env.ledger().set_timestamp(1000);
 
@@ -525,7 +515,7 @@ fn test_claim_gating_with_multiple_investors() {
         &0u64,
         &tok,
         &None,
-        &tre,
+        &treasury,
         &None,
         &None,
         &None,
@@ -617,7 +607,6 @@ fn settle_with_maturity_zero_succeeds_immediately() {
         &token,
         &None,
         &treasury,
-        &None,
         &None,
         &None,
         &None,
@@ -830,12 +819,10 @@ fn test_sweep_terminal_dust_after_settle_transfers_to_treasury() {
     let env = Env::default();
     env.mock_all_auths();
     let token = install_stellar_asset_token(&env);
+    let (contract_id, client) = deploy_with_id(&env);
     let admin = Address::generate(&env);
     let sme = Address::generate(&env);
-    let token = install_stellar_asset_token(&env);
-    let (tok, tre) = (token.id.clone(), Address::generate(&env));
-
-    let client = deploy(&env);
+    let (_tok, treasury) = free_addresses(&env);
     let maturity = 5000u64;
     client.init(
         &admin,
@@ -844,9 +831,9 @@ fn test_sweep_terminal_dust_after_settle_transfers_to_treasury() {
         &TARGET,
         &100i64,
         &maturity,
-        &tok,
+        &token.id,
         &None,
-        &tre,
+        &treasury,
         &None,
         &None,
         &None,
@@ -856,8 +843,8 @@ fn test_sweep_terminal_dust_after_settle_transfers_to_treasury() {
     client.fund(&investor, &1_000i128);
     client.settle();
 
-    token.stellar.mint(&client.address, &5_000i128);
-    let before_t = token.token.balance(&tre);
+    token.stellar.mint(&contract_id, &5_000i128);
+    let before_t = token.token.balance(&treasury);
     let swept = client.sweep_terminal_dust(&5_000i128);
     assert_eq!(swept, 5_000i128);
     assert_eq!(token.token.balance(&tre), before_t + 5_000i128);
@@ -869,12 +856,11 @@ fn test_sweep_terminal_dust_after_settle_transfers_to_treasury() {
 fn test_sweep_terminal_dust_after_withdraw_and_ledger_tick() {
     let env = Env::default();
     env.mock_all_auths();
+    let token = install_stellar_asset_token(&env);
+    let (contract_id, client) = deploy_with_id(&env);
     let admin = Address::generate(&env);
     let sme = Address::generate(&env);
-    let token = install_stellar_asset_token(&env);
-    let (tok, tre) = (token.id.clone(), Address::generate(&env));
-
-    let client = deploy(&env);
+    let (_tok, treasury) = free_addresses(&env);
     let maturity = 5000u64;
     client.init(
         &admin,
@@ -883,9 +869,9 @@ fn test_sweep_terminal_dust_after_withdraw_and_ledger_tick() {
         &TARGET,
         &100i64,
         &maturity,
-        &tok,
+        &token.id,
         &None,
-        &tre,
+        &treasury,
         &None,
         &None,
         &None,
@@ -898,7 +884,7 @@ fn test_sweep_terminal_dust_after_withdraw_and_ledger_tick() {
     env.ledger()
         .set_sequence_number(env.ledger().sequence() + 10);
 
-    token.stellar.mint(&client.address, &333i128);
+    token.stellar.mint(&contract_id, &333i128);
     let swept = client.sweep_terminal_dust(&333i128);
     assert_eq!(swept, 333i128);
 }
@@ -1020,7 +1006,12 @@ fn test_sweep_caps_at_contract_balance() {
 #[test]
 fn test_sweep_requires_treasury_auth() {
     let env = Env::default();
-    let (client, admin, sme) = setup(&env);
+    env.mock_all_auths();
+    let token = install_stellar_asset_token(&env);
+    let (contract_id, client) = deploy_with_id(&env);
+    let admin = Address::generate(&env);
+    let sme = Address::generate(&env);
+    let (_tok, treasury) = free_addresses(&env);
     client.init(
         &admin,
         &String::from_str(&env, "SW007"),
@@ -1028,9 +1019,9 @@ fn test_sweep_requires_treasury_auth() {
         &TARGET,
         &100i64,
         &0u64,
-        &Address::generate(&env),
+        &token.id,
         &None,
-        &Address::generate(&env),
+        &treasury,
         &None,
         &None,
         &None,
@@ -1038,8 +1029,7 @@ fn test_sweep_requires_treasury_auth() {
     );
     fund_to_target(&client, &env);
     client.settle();
-    let token = install_stellar_asset_token(&env);
-    token.stellar.mint(&client.address, &(MAX_DUST_SWEEP_AMOUNT + 1));
+    token.stellar.mint(&contract_id, &(MAX_DUST_SWEEP_AMOUNT + 1));
 
     client.sweep_terminal_dust(&(MAX_DUST_SWEEP_AMOUNT + 1));
 }
@@ -1051,14 +1041,30 @@ fn test_sweep_requires_treasury_auth() {
 fn claim_investor_payout_succeeds_after_settle() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, sme) = setup(&env);
     let investor = Address::generate(&env);
+    let token = install_stellar_asset_token(&env);
+    let (contract_id, client) = deploy_with_id(&env);
+    let admin = Address::generate(&env);
+    let sme = Address::generate(&env);
+    let (_tok, treasury) = free_addresses(&env);
 
-    default_init(&client, &env, &admin, &sme);
+    client.init(
+        &admin,
+        &String::from_str(&env, "SW008"),
+        &sme,
+        &TARGET,
+        &800i64,
+        &0u64,
+        &token.id,
+        &None,
+        &treasury,
+        &None,
+        &None,
+        &None,
+    );
     client.fund(&investor, &TARGET);
     client.settle();
-    let token = install_stellar_asset_token(&env);
-    token.stellar.mint(&client.address, &10i128);
+    token.stellar.mint(&contract_id, &10i128);
 
     env.mock_auths(&[]);
     let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

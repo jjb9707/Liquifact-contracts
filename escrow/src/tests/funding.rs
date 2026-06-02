@@ -837,6 +837,191 @@ fn test_tier_selection_ladder() {
 }
 
 #[test]
+fn test_yield_tier_emitted_in_event() {
+    use soroban_sdk::testutils::Events as _;
+
+    let env = Env::default();
+    env.mock_all_auths();
+    let (contract_id, client) = deploy_with_id(&env);
+    let admin = Address::generate(&env);
+    let sme = Address::generate(&env);
+    let (tok, tre) = free_addresses(&env);
+    let invoice_id = symbol_short!("EVT001");
+
+    let mut tiers = SorobanVec::new(&env);
+    tiers.push_back(YieldTier {
+        min_lock_secs: 100,
+        yield_bps: 900,
+    });
+
+    client.init(
+        &admin,
+        &soroban_sdk::String::from_str(&env, "EVT001"),
+        &sme,
+        &10_000i128,
+        &800i64,
+        &0u64,
+        &tok,
+        &None,
+        &tre,
+        &Some(tiers),
+        &None,
+        &None,
+    );
+
+    let inv = Address::generate(&env);
+
+    // 1. Tiered fund: committed_lock_secs=150 >= tier.min_lock_secs=100 => yield 900, lock 100.
+    client.fund_with_commitment(&inv, &1_000i128, &150u64);
+
+    assert_eq!(
+        env.events().all(),
+        std::vec![EscrowFunded {
+            name: symbol_short!("funded"),
+            invoice_id: invoice_id.clone(),
+            investor: inv.clone(),
+            amount: 1_000i128,
+            funded_amount: 1_000i128,
+            status: 0,
+            investor_effective_yield_bps: 900,
+            tier_lock_secs: 100,
+        }
+        .to_xdr(&env, &contract_id)]
+    );
+
+    // 2. Base yield: committed_lock_secs=50 < tier.min_lock_secs=100 => yield 800, lock 0.
+    let inv2 = Address::generate(&env);
+    client.fund_with_commitment(&inv2, &1_000i128, &50u64);
+
+    let binding = env.events().all();
+    let all_event_list = binding.events();
+    let last = all_event_list
+        .last()
+        .expect("expected funded event for base-yield deposit");
+    assert_eq!(
+        *last,
+        EscrowFunded {
+            name: symbol_short!("funded"),
+            invoice_id,
+            investor: inv2,
+            amount: 1_000i128,
+            funded_amount: 2_000i128,
+            status: 0,
+            investor_effective_yield_bps: 800,
+            tier_lock_secs: 0,
+        }
+        .to_xdr(&env, &contract_id)
+    );
+}
+
+#[test]
+fn test_yield_tier_emitted_no_tiers() {
+    use soroban_sdk::testutils::Events as _;
+
+    let env = Env::default();
+    env.mock_all_auths();
+    let (contract_id, client) = deploy_with_id(&env);
+    let admin = Address::generate(&env);
+    let sme = Address::generate(&env);
+    let (tok, tre) = free_addresses(&env);
+    let invoice_id = symbol_short!("NOTIER");
+
+    client.init(
+        &admin,
+        &soroban_sdk::String::from_str(&env, "NOTIER"),
+        &sme,
+        &10_000i128,
+        &800i64,
+        &0u64,
+        &tok,
+        &None,
+        &tre,
+        &None,
+        &None,
+        &None,
+    );
+
+    let inv = Address::generate(&env);
+    // fund_with_commitment even with no tiers configured
+    client.fund_with_commitment(&inv, &1_000i128, &150u64);
+
+    assert_eq!(
+        env.events().all(),
+        std::vec![EscrowFunded {
+            name: symbol_short!("funded"),
+            invoice_id: invoice_id.clone(),
+            investor: inv.clone(),
+            amount: 1_000i128,
+            funded_amount: 1_000i128,
+            status: 0,
+            investor_effective_yield_bps: 800,
+            tier_lock_secs: 0,
+        }
+        .to_xdr(&env, &contract_id)]
+    );
+}
+
+#[test]
+fn test_yield_tier_emitted_between_tiers() {
+    use soroban_sdk::testutils::Events as _;
+
+    let env = Env::default();
+    env.mock_all_auths();
+    let (contract_id, client) = deploy_with_id(&env);
+    let admin = Address::generate(&env);
+    let sme = Address::generate(&env);
+    let (tok, tre) = free_addresses(&env);
+    let invoice_id = symbol_short!("MIDTIER");
+
+    let mut tiers = SorobanVec::new(&env);
+    tiers.push_back(YieldTier {
+        min_lock_secs: 100,
+        yield_bps: 900,
+    });
+    tiers.push_back(YieldTier {
+        min_lock_secs: 200,
+        yield_bps: 1000,
+    });
+
+    client.init(
+        &admin,
+        &soroban_sdk::String::from_str(&env, "MIDTIER"),
+        &sme,
+        &10_000i128,
+        &800i64,
+        &0u64,
+        &tok,
+        &None,
+        &tre,
+        &Some(tiers),
+        &None,
+        &None,
+    );
+
+    let inv = Address::generate(&env);
+    // Committing 150 secs (between 100 and 200) -> matches the 100 sec tier.
+    client.fund_with_commitment(&inv, &1_000i128, &150u64);
+
+    let binding = env.events().all();
+    let event = binding.events().get(0).unwrap();
+    assert_eq!(
+        *event,
+        EscrowFunded {
+            name: symbol_short!("funded"),
+            invoice_id: invoice_id.clone(),
+            investor: inv.clone(),
+            amount: 1_000i128,
+            funded_amount: 1_000i128,
+            status: 0,
+            investor_effective_yield_bps: 900,
+            tier_lock_secs: 100,
+        }
+        .to_xdr(&env, &contract_id)
+    );
+}
+
+
+#[test]
 fn test_fund_with_commitment_zero_lock_behaves_as_fund() {
     let env = Env::default();
     env.mock_all_auths();
