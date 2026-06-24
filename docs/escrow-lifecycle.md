@@ -47,11 +47,47 @@ forbidden regressions, and interaction rules between `withdraw` vs `settle` path
 
 ---
 
+## Batch funding (`fund_batch`)
+
+`fund_batch(entries: Vec<(Address, i128)>)` processes multiple investor contributions in a single call,
+reducing transaction overhead for primary issuance workflows.
+
+**Semantics:**
+- Each entry `(investor_address, amount)` is processed sequentially
+- Per-investor `require_auth()` is called for each entry
+- All existing [`fund()`](funding.md) invariants (allowlist, caps, min contribution, overflow guards)
+  are enforced per entry
+- One `EscrowFunded` event is emitted per entry
+- If any entry fails its invariants, the call returns an error **without corrupting prior entries**
+  (Soroban's transaction atomicity ensures consistent state)
+
+**Capacity:**
+- Batch size must be `> 0` and `<= MAX_FUND_BATCH` (50 entries)
+- Empty batch panics with `EscrowError::FundingBatchEmpty`
+- Oversized batch panics with `EscrowError::FundingBatchTooLarge`
+
+**Funded-target snapshot:**
+- If any entry causes the escrow to transition to **funded** (status `0 → 1`),
+  `FundingCloseSnapshot` is recorded exactly once
+- Remaining entries are processed even after the transition
+
+**Example:**
+```rust
+let entries = vec![
+    (investor_a, 30_000i128),
+    (investor_b, 55_000i128),
+    (investor_c, 10_000i128),
+];
+let result = fund_batch(entries); // All three funded in one call
+```
+
+---
+
 ## Valid transitions
 
 | From | To | Trigger | Auth required |
 |------|----|---------|--------------|
-| `0` (open) | `1` (funded) | `fund()` or `fund_with_commitment()` when `funded_amount >= funding_target` | Investor auth |
+| `0` (open) | `1` (funded) | `fund()`, `fund_with_commitment()`, or `fund_batch()` when `funded_amount >= funding_target` | Investor auth (per-investor for batch) |
 | `0` (open) | `4` (cancelled) | `cancel_funding()` | Admin auth; legal hold must be inactive |
 | `1` (funded) | `2` (settled) | `settle()` | SME auth; legal hold must be inactive; if `maturity > 0`, ledger timestamp must be >= maturity |
 | `1` (funded) | `3` (withdrawn) | `withdraw()` | SME auth; legal hold must be inactive |

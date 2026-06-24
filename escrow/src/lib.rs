@@ -145,6 +145,10 @@ pub const MAX_ATTESTATION_APPEND_ENTRIES: u32 = 32;
 /// Mirrors the spirit of `MAX_ATTESTATION_APPEND_ENTRIES` to limit per-call work.
 pub const MAX_INVESTOR_ALLOWLIST_BATCH: u32 = 32;
 
+/// Upper bound on [`LiquifactEscrow::fund_batch`] entries to keep storage/CPU bounded.
+/// Mirrors the spirit of `MAX_ATTESTATION_APPEND_ENTRIES` to limit per-call work.
+pub const MAX_FUND_BATCH: u32 = 50;
+
 /// Upper bound on [`LiquifactEscrow::sweep_terminal_dust`] per call (base units of the funding token).
 ///
 /// Caps blast radius if instrumentation mis-estimates “dust”; tune per asset decimals off-chain.
@@ -218,6 +222,8 @@ pub enum EscrowError {
 
     InvestorBatchEmpty = 70,
     InvestorBatchTooLarge = 71,
+    FundingBatchEmpty = 82,
+    FundingBatchTooLarge = 83,
     TargetNotPositive = 72,
     TargetUpdateNotOpen = 73,
     TargetBelowFundedAmount = 74,
@@ -1899,6 +1905,52 @@ impl LiquifactEscrow {
         committed_lock_secs: u64,
     ) -> InvoiceEscrow {
         Self::fund_impl(env, investor, amount, false, committed_lock_secs)
+    }
+
+    /// Batch funding entrypoint: record multiple investor principals in a single call.
+    ///
+    /// Each entry is processed sequentially with per-investor [`Address::require_auth()`].
+    /// All existing [`LiquifactEscrow::fund`] invariants (allowlist, caps, min contribution,
+    /// overflow guards) are enforced per entry. If an entry fails its invariants,
+    /// the call returns an error without corrupting prior entries.
+    ///
+    /// # Parameters
+    /// - `entries`: `Vec<(Address, i128)>` of (investor address, funding amount) tuples.
+    ///
+    /// # Errors
+    /// - [`EscrowError::FundingBatchEmpty`] if entries is empty
+    /// - [`EscrowError::FundingBatchTooLarge`] if entries.len() > [`MAX_FUND_BATCH`]
+    /// - Per-entry: all errors from [`LiquifactEscrow::fund`] for that investor/amount pair
+    ///
+    /// # Events
+    /// One [`EscrowFunded`] event per entry (identical to single [`LiquifactEscrow::fund`] semantics).
+    ///
+    /// # Funded-target snapshot
+    /// If any entry causes the escrow to transition to **funded** (status 0 → 1),
+    /// [`DataKey::FundingCloseSnapshot`] is recorded exactly once. Remaining entries are
+    /// processed even after transition.
+    pub fn fund_batch(env: Env, entries: Vec<(Address, i128)>) -> InvoiceEscrow {
+        let n = entries.len();
+
+        ensure(&env, n > 0, EscrowError::FundingBatchEmpty);
+        ensure(
+            &env,
+            (n as u32) <= MAX_FUND_BATCH,
+            EscrowError::FundingBatchTooLarge,
+        );
+
+        let mut escrow = Self::get_escrow(env.clone());
+
+        for i in 0..n {
+            let (investor, amount) = entries.get(i).unwrap();
+
+            // Call fund_impl for each entry, but we need to reconstruct the escrow
+            // after each call. However, fund_impl returns the updated escrow,
+            // so we capture it for the next iteration.
+            escrow = Self::fund_impl(env.clone(), investor, amount, true, 0);
+        }
+
+        escrow
     }
 
     fn fund_impl(
