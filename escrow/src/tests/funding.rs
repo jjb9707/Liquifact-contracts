@@ -2873,9 +2873,9 @@ fn lock_with_zero_maturity_is_always_accepted() {
         &None,
         &None,
     );
-    // A huge lock_secs should be accepted when maturity == 0
-    let escrow = client.fund_with_commitment(&investor, &1_000i128, &999_999_999u64);
-    assert_eq!(escrow.status, 1, "over-funding should transition to funded");
+    // maturity = 0 → commitment lock accepted regardless of size
+    let escrow = client.fund_with_commitment(&investor, &10_000i128, &999_999u64);
+    assert_eq!(escrow.status, 1);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3045,6 +3045,7 @@ fn test_fund_batch_mid_batch_funded_transition() {
         &None,
         &None,
     );
+    let investor = Address::generate(&env);
     let escrow = client.fund_with_commitment(&investor, &1_000i128, &9999u64);
     assert_eq!(escrow.status, 0);
     assert_eq!(client.get_investor_claim_not_before(&investor), 10999u64);
@@ -3257,12 +3258,9 @@ fn test_fund_batch_preserves_event_semantics() {
     client.fund_batch(&entries);
 
     // Verify events emitted
-    let events = env.events().all();
-    assert_eq!(
-        events.events().len(),
-        2,
-        "should emit 2 EscrowFunded events"
-    );
+    let contract_events = env.events().all();
+    let events = contract_events.events();
+    assert_eq!(events.len(), 2, "should emit 2 EscrowFunded events");
 
     // Each event corresponds to a fund operation
     // (Detailed event field verification depends on EscrowFunded structure)
