@@ -25,6 +25,8 @@ fn test_update_maturity_success() {
         &None,
         &None,
         &None,
+        &None,
+        &None,
     );
     let updated = client.update_maturity(&2000u64);
     assert_eq!(updated.maturity, 2000u64);
@@ -47,6 +49,8 @@ fn test_update_maturity_wrong_state() {
         &Address::generate(&env),
         &None,
         &Address::generate(&env),
+        &None,
+        &None,
         &None,
         &None,
         &None,
@@ -82,6 +86,8 @@ fn test_update_maturity_unauthorized() {
         &None,
         &None,
         &None,
+        &None,
+        &None,
     );
     env.mock_auths(&[]);
     client.update_maturity(&2000u64);
@@ -102,6 +108,8 @@ fn test_propose_admin_sets_pending_without_changing_admin() {
         &Address::generate(&env),
         &None,
         &Address::generate(&env),
+        &None,
+        &None,
         &None,
         &None,
         &None,
@@ -130,6 +138,8 @@ fn test_accept_admin_promotes_pending_and_clears_pending() {
         &Address::generate(&env),
         &None,
         &Address::generate(&env),
+        &None,
+        &None,
         &None,
         &None,
         &None,
@@ -167,6 +177,8 @@ fn test_transfer_admin_deprecated_shim_only_proposes() {
         &None,
         &None,
         &None,
+        &None,
+        &None,
     );
 
     let unchanged = client.transfer_admin(&new_admin);
@@ -189,6 +201,8 @@ fn test_transfer_admin_same_address_panics() {
         &Address::generate(&env),
         &None,
         &Address::generate(&env),
+        &None,
+        &None,
         &None,
         &None,
         &None,
@@ -336,6 +350,7 @@ fn test_read_model_summary_includes_optional_admin_fields() {
         &Some(10_000i128),
         &None,
         &None,
+        &None,
     );
 
     let summary = client.get_escrow_summary();
@@ -364,6 +379,8 @@ fn test_record_collateral_stored_and_does_not_block_settle() {
         &Address::generate(&env),
         &None,
         &Address::generate(&env),
+        &None,
+        &None,
         &None,
         &None,
         &None,
@@ -402,6 +419,8 @@ fn test_collateral_zero_panics() {
         &None,
         &None,
         &None,
+        &None,
+        &None,
     );
     client.record_sme_collateral_commitment(&symbol_short!("XLM"), &0i128);
 }
@@ -421,6 +440,8 @@ fn test_collateral_requires_sme_auth() {
         &Address::generate(&env),
         &None,
         &Address::generate(&env),
+        &None,
+        &None,
         &None,
         &None,
         &None,
@@ -447,6 +468,8 @@ fn test_legal_hold_blocks_settle_withdraw_claim_and_fund() {
         &Address::generate(&env),
         &None,
         &Address::generate(&env),
+        &None,
+        &None,
         &None,
         &None,
         &None,
@@ -506,6 +529,8 @@ fn test_legal_hold_blocks_new_funds_when_open() {
         &None,
         &None,
         &None,
+        &None,
+        &None,
     );
     client.set_legal_hold(&true);
     client.fund(&investor, &1i128);
@@ -517,7 +542,7 @@ fn test_legal_hold_blocks_new_funds_when_open() {
 #[test]
 fn test_get_legal_hold_defaults_false_on_fresh_deploy() {
     let env = Env::default();
-    // No init, no set_legal_hold – DataKey::LegalHold is absent from storage.
+    // No init, no set_legal_hold ├ö├ç├┤ DataKey::LegalHold is absent from storage.
     let client = deploy(&env);
     assert!(!client.get_legal_hold());
 }
@@ -542,6 +567,8 @@ fn test_update_funding_target_by_admin_succeeds() {
         &token,
         &None,
         &treasury,
+        &None,
+        &None,
         &None,
         &None,
         &None,
@@ -575,6 +602,8 @@ fn test_update_funding_target_by_non_admin_panics() {
         &token,
         &None,
         &treasury,
+        &None,
+        &None,
         &None,
         &None,
         &None,
@@ -615,6 +644,8 @@ fn test_update_funding_target_fails_when_funded() {
         &None,
         &None,
         &None,
+        &None,
+        &None,
     );
     client.fund(&investor, &5_000i128);
     client.update_funding_target(&10_000i128);
@@ -642,6 +673,8 @@ fn test_update_funding_target_below_funded_panics() {
         &token,
         &None,
         &treasury,
+        &None,
+        &None,
         &None,
         &None,
         &None,
@@ -680,6 +713,8 @@ fn test_update_funding_target_zero_panics() {
         &None,
         &None,
         &None,
+        &None,
+        &None,
     );
     client.update_funding_target(&0i128);
 }
@@ -712,6 +747,8 @@ fn test_update_funding_target_event_fields() {
         &token,
         &None,
         &treasury,
+        &None,
+        &None,
         &None,
         &None,
         &None,
@@ -764,9 +801,11 @@ fn test_update_funding_target_fails_when_settled() {
         &None,
         &None,
         &None,
+        &None,
+        &None,
     );
-    client.fund(&investor, &5_000i128); // status → 1 (funded)
-    client.settle(); // status → 2 (settled)
+    client.fund(&investor, &5_000i128); // status ├ö├Ñ├å 1 (funded)
+    client.settle(); // status ├ö├Ñ├å 2 (settled)
     client.update_funding_target(&6_000i128);
 }
 
@@ -778,7 +817,7 @@ fn test_update_funding_target_fails_when_withdrawn() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, _escrow_id, _sme) = init_and_fund_with_real_token(&env, 5_000i128, "WD001");
-    client.withdraw(); // status → 3 (withdrawn)
+    client.withdraw(); // status ├ö├Ñ├å 3 (withdrawn)
     client.update_funding_target(&6_000i128);
 }
 
@@ -812,10 +851,12 @@ fn test_update_funding_target_equal_to_funded_amount_succeeds() {
         &None,
         &None,
         &None,
+        &None,
+        &None,
     );
     client.fund(&investor, &4_000i128); // funded_amount == 4_000, status still 0
 
-    // new_target == funded_amount: boundary — must not panic.
+    // new_target == funded_amount: boundary ├ö├ç├Â must not panic.
     let updated = client.update_funding_target(&4_000i128);
     assert_eq!(updated.funding_target, 4_000i128);
     assert_eq!(updated.funded_amount, 4_000i128);
@@ -844,6 +885,8 @@ fn test_update_funding_target_negative_panics() {
         &token,
         &None,
         &treasury,
+        &None,
+        &None,
         &None,
         &None,
         &None,
@@ -883,6 +926,8 @@ fn test_update_maturity_event_fields() {
         &token,
         &None,
         &treasury,
+        &None,
+        &None,
         &None,
         &None,
         &None,
@@ -935,8 +980,10 @@ fn test_update_maturity_fails_when_funded() {
         &None,
         &None,
         &None,
+        &None,
+        &None,
     );
-    client.fund(&investor, &5_000i128); // status → 1 (funded)
+    client.fund(&investor, &5_000i128); // status ├ö├Ñ├å 1 (funded)
     client.update_maturity(&2000u64);
 }
 
@@ -970,9 +1017,11 @@ fn test_update_maturity_fails_when_settled() {
         &None,
         &None,
         &None,
+        &None,
+        &None,
     );
-    client.fund(&investor, &5_000i128); // status → 1
-    client.settle(); // status → 2
+    client.fund(&investor, &5_000i128); // status ├ö├Ñ├å 1
+    client.settle(); // status ├ö├Ñ├å 2
     client.update_maturity(&2000u64);
 }
 
@@ -984,11 +1033,11 @@ fn test_update_maturity_fails_when_withdrawn() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, _escrow_id, _sme) = init_and_fund_with_real_token(&env, 5_000i128, "MAT004");
-    client.withdraw(); // status → 3
+    client.withdraw(); // status ├ö├Ñ├å 3
     client.update_maturity(&2000u64);
 }
 
-/// Setting maturity to zero is valid — it means no maturity gate.
+/// Setting maturity to zero is valid ├ö├ç├Â it means no maturity gate.
 /// The contract must accept zero as new_maturity in Open state.
 #[test]
 fn test_update_maturity_to_zero_succeeds() {
@@ -1016,6 +1065,8 @@ fn test_update_maturity_to_zero_succeeds() {
         &None,
         &None,
         &None,
+        &None,
+        &None,
     );
     let updated = client.update_maturity(&0u64);
     assert_eq!(updated.maturity, 0u64);
@@ -1023,7 +1074,7 @@ fn test_update_maturity_to_zero_succeeds() {
 }
 
 /// Ledger time semantics: `settle` uses `env.ledger().timestamp()`
-/// (validator-observed seconds). Settle must pass exactly at maturity —
+/// (validator-observed seconds). Settle must pass exactly at maturity ├ö├ç├Â
 /// confirming the boundary is `now >= maturity` (inclusive).
 #[test]
 fn test_settle_passes_exactly_at_maturity_ledger_time() {
@@ -1052,16 +1103,18 @@ fn test_settle_passes_exactly_at_maturity_ledger_time() {
         &None,
         &None,
         &None,
+        &None,
+        &None,
     );
     client.fund(&investor, &5_000i128);
 
-    // Advance ledger to exactly maturity — must succeed
+    // Advance ledger to exactly maturity ├ö├ç├Â must succeed
     env.ledger().with_mut(|l| l.timestamp = 5000);
     let settled = client.settle();
     assert_eq!(settled.status, 2);
 }
 
-/// Ledger time semantics: settle must panic one second before maturity —
+/// Ledger time semantics: settle must panic one second before maturity ├ö├ç├Â
 /// confirming the `>=` boundary strictly excludes values below maturity.
 #[test]
 #[should_panic]
@@ -1091,16 +1144,18 @@ fn test_settle_fails_one_second_before_maturity() {
         &None,
         &None,
         &None,
+        &None,
+        &None,
     );
     client.fund(&investor, &5_000i128);
 
-    // One second before maturity — must reject
+    // One second before maturity ├ö├ç├Â must reject
     env.ledger().with_mut(|l| l.timestamp = 4999);
     client.settle();
 }
 
 /// A second `update_maturity` call in the same Open state must overwrite
-/// the previous value correctly — storage is atomic per call.
+/// the previous value correctly ├ö├ç├Â storage is atomic per call.
 #[test]
 fn test_update_maturity_twice_overwrites() {
     let env = Env::default();
@@ -1127,6 +1182,8 @@ fn test_update_maturity_twice_overwrites() {
         &None,
         &None,
         &None,
+        &None,
+        &None,
     );
 
     client.update_maturity(&2000u64);
@@ -1135,11 +1192,11 @@ fn test_update_maturity_twice_overwrites() {
     assert_eq!(client.get_escrow().maturity, 3000u64);
 }
 
-// ── Authorization guard ordering audit (issue #265) ───────────────────────────
+// ├ö├Â├ç├ö├Â├ç Authorization guard ordering audit (issue #265) ├ö├Â├ç├ö├Â├ç├ö├Â├ç├ö├Â├ç├ö├Â├ç├ö├Â├ç├ö├Â├ç├ö├Â├ç├ö├Â├ç├ö├Â├ç├ö├Â├ç├ö├Â├ç├ö├Â├ç├ö├Â├ç├ö├Â├ç├ö├Â├ç├ö├Â├ç├ö├Â├ç├ö├Â├ç├ö├Â├ç├ö├Â├ç├ö├Â├ç├ö├Â├ç├ö├Â├ç├ö├Â├ç├ö├Â├ç├ö├Â├ç
 //
 // Negative tests: each guarded entrypoint must trap when `require_auth` fails
 // (Soroban host aborts the transaction). Canonical ordering is documented in
-// `docs/escrow-security-checklist.md` §6 and ADR-002.
+// `docs/escrow-security-checklist.md` Ôö¼┬║6 and ADR-002.
 
 fn auth_audit_init_funded(
     env: &Env,
@@ -1298,6 +1355,8 @@ fn auth_audit_sweep_terminal_dust_requires_treasury() {
         &token.id,
         &None,
         &treasury,
+        &None,
+        &None,
         &None,
         &None,
         &None,
@@ -1496,6 +1555,8 @@ fn test_rotate_beneficiary_then_withdraw_goes_to_new_sme() {
         &token.id,
         &None,
         &treasury,
+        &None,
+        &None,
         &None,
         &None,
         &None,

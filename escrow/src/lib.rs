@@ -553,8 +553,12 @@ pub enum DataKey {
     DistributedPrincipal,
     /// Optional funding deadline (ledger timestamp); after it passes, new funds are rejected.
     FundingDeadline,
-    /// Bounded vector of investor addresses who have contributed to the escrow.
-    InvestorIndex,
+    /// Ledger timestamp (seconds since Unix epoch) recorded exactly once when `status` transitions
+    /// from 1 → 2 inside [`LiquifactEscrow::settle`].
+    ///
+    /// **Write-once:** written by `settle` only; the getter returns [`None`] on legacy instances
+    /// where this key was never written (ADR-007 additive-key policy).
+    SettledAt,
 }
 
 // --- Data types ---
@@ -1166,6 +1170,7 @@ impl LiquifactEscrow {
         max_per_investor: Option<i128>,
         legal_hold_clear_delay: Option<u64>,
         funding_deadline: Option<u64>,
+        allowlist_active: Option<bool>,
     ) -> InvoiceEscrow {
         admin.require_auth();
 
@@ -1239,7 +1244,54 @@ impl LiquifactEscrow {
         if escrow.funded_amount >= escrow.funding_target {
             escrow.status = 1;
         }
-        env.storage().instance().set(&DataKey::Escrow, &escrow);
+        env.storage()
+            .instance()
+            .set(&DataKey::MinContributionFloor, &floor);
+
+        env.storage()
+            .instance()
+            .set(&DataKey::UniqueFunderCount, &0u32);
+
+        if let Some(cap) = max_per_investor {
+            ensure(&env, cap > 0, EscrowError::MaxPerInvestorNotPositive);
+            env.storage()
+                .instance()
+                .set(&DataKey::MaxPerInvestorCap, &cap);
+        }
+
+        if let Some(cap) = max_unique_investors {
+            ensure(&env, cap > 0, EscrowError::MaxUniqueInvestorsNotPositive);
+            env.storage()
+                .instance()
+                .set(&DataKey::MaxUniqueInvestorsCap, &cap);
+        }
+
+        let delay = legal_hold_clear_delay.unwrap_or(0);
+        if delay > 0 {
+            env.storage()
+                .instance()
+                .set(&DataKey::LegalHoldClearDelay, &delay);
+        }
+
+        if let Some(active) = allowlist_active {
+            if active {
+                env.storage()
+                    .instance()
+                    .set(&DataKey::AllowlistActive, &true);
+            }
+        }
+
+        EscrowInitialized {
+            name: symbol_short!("escrow_ii"),
+            // Read stored values so event fields match persisted keys (indexer single-event bootstrap).
+            escrow: Self::get_escrow(env.clone()),
+            funding_token: Self::get_funding_token(env.clone()),
+            treasury: Self::get_treasury(env.clone()),
+            registry: Self::get_registry_ref(env.clone()),
+            has_maturity_lock: Self::has_maturity_lock(env.clone()),
+        }
+        .publish(&env);
+
         escrow
     }
 
@@ -1834,6 +1886,43 @@ impl LiquifactEscrow {
     /// and sequence used by off-chain auditors.
     pub fn get_funding_close_snapshot(env: Env) -> Option<FundingCloseSnapshot> {
         env.storage().instance().get(&DataKey::FundingCloseSnapshot)
+    }
+
+    /// Returns the ledger timestamp (seconds since Unix epoch) at which [`LiquifactEscrow::settle`]
+    /// transitioned status from 1 → 2, or [`None`] if the escrow has not yet been settled.
+    ///
+    /// **Additive-key policy (ADR-007):** legacy escrow instances that were settled before this key
+    /// was introduced will return [`None`] because [`DataKey::SettledAt`] was never written.
+    ///
+    /// # Returns
+    /// - `Some(timestamp)` — the ledger timestamp at the moment `settle()` was called.
+    /// - `None` — escrow is not yet settled, or is a legacy instance predating this key.
+    pub fn get_settled_at(env: Env) -> Option<u64> {
+        env.storage().instance().get(&DataKey::SettledAt)
+    }
+
+    /// Returns `true` if the escrow can be settled now, `false` otherwise.
+    ///
+    /// Checks:
+    /// - Status must be 1 (funded)
+    /// - No legal hold active
+    /// - If `maturity > 0`, ledger timestamp must be `>= maturity`
+    ///
+    /// # Panics
+    /// Panics with [`EscrowError::EscrowNotInitialized`] if `init` has not been called.
+    pub fn is_settleable(env: Env) -> bool {
+        if Self::legal_hold_active(&env) {
+            return false;
+        }
+        let escrow = Self::get_escrow(env.clone());
+        if escrow.status != 1 {
+            return false;
+        }
+        if escrow.maturity > 0 {
+            let now = env.ledger().timestamp();
+            return now >= escrow.maturity;
+        }
+        true
     }
 
     /// Effective yield (bps) for this investor after their **first** deposit; later [`LiquifactEscrow::fund`]
@@ -2752,6 +2841,10 @@ impl LiquifactEscrow {
         }
 
         escrow.status = 2;
+
+        // Write-once settlement timestamp (ADR-007 additive-key policy).
+        // settle() is only reachable from status 1, so this key is set exactly once per escrow.
+        env.storage().instance().set(&DataKey::SettledAt, &now);
 
         env.storage().instance().set(&DataKey::Escrow, &escrow);
 

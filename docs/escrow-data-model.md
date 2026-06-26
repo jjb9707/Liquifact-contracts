@@ -53,10 +53,11 @@ with `unwrap_or(0)`.
 | `FundingCloseSnapshot` | `FundingCloseSnapshot` | `fund_impl` on first transition to `status == 1` | Immutable once written |
 | `SmeCollateralPledge` | `SmeCollateralCommitment` | `record_sme_collateral_commitment` | Record-only; replaceable by SME |
 | `MaxUniqueInvestorsCap` | `u32` | `init` (when `max_unique_investors` arg is `Some`) | Absent means unlimited |
+| `MaxPerInvestorCap` | `i128` | `init` (when `max_per_investor` arg is `Some`) | Absent means unlimited |
 | `PrimaryAttestationHash` | `BytesN<32>` | `bind_primary_attestation_hash` | Single-set; panics on second call |
 | `AttestationAppendLog` | `Vec<BytesN<32>>` | `append_attestation_digest` | Bounded by `MAX_ATTESTATION_APPEND_ENTRIES` (32) |
-| `InvestorIndex` | `Vec<Address>` | `fund_impl` (on first deposit) | Bounded vector of investor addresses who contributed |
-
+| `SettledAt` | `u64` | `settle` on status 1→2 transition | Write-once; `None` before settlement; legacy-safe |
+| `FundingDeadline` | `u64` | `init` (when `funding_deadline` arg is `Some`) | Ledger timestamp; new funds rejected after this |
 
 ### Per-address investor keys in persistent storage
 

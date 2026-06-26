@@ -26,6 +26,8 @@ fn test_init_stores_escrow() {
         &None,
         &None,
         &None,
+        &None,
+        &None,
     );
     assert_eq!(escrow.invoice_id, symbol_short!("INV001"));
     assert_eq!(escrow.admin, admin);
@@ -58,6 +60,8 @@ fn test_init_stores_keyed_invoice_and_lists_it() {
         &None,
         &None,
         &None,
+        &None,
+        &None,
     );
     let got = client.get_escrow();
     assert_eq!(got, escrow);
@@ -77,6 +81,8 @@ fn test_init_requires_admin_auth() {
         &Address::generate(&env),
         &None,
         &Address::generate(&env),
+        &None,
+        &None,
         &None,
         &None,
         &None,
@@ -178,6 +184,8 @@ fn test_cost_baseline_init() {
         &None,
         &None,
         &None,
+        &None,
+        &None,
     );
 }
 
@@ -201,6 +209,8 @@ fn test_cost_baseline_init_zero_maturity() {
         &None,
         &None,
         &None,
+        &None,
+        &None,
     );
 }
 
@@ -218,6 +228,8 @@ fn test_cost_baseline_init_max_amount() {
         &Address::generate(&env),
         &None,
         &Address::generate(&env),
+        &None,
+        &None,
         &None,
         &None,
         &None,
@@ -252,6 +264,8 @@ fn test_init_invoice_id_empty_string_panics() {
         &None,
         &None,
         &None,
+        &None,
+        &None,
     );
 }
 
@@ -274,6 +288,8 @@ fn test_init_invoice_id_whitespace_panics() {
         &t,
         &None,
         &tr,
+        &None,
+        &None,
         &None,
         &None,
         &None,
@@ -309,6 +325,8 @@ fn test_init_invoice_id_too_long_panics() {
         &None,
         &None,
         &None,
+        &None,
+        &None,
     );
 }
 
@@ -337,6 +355,8 @@ fn test_init_invoice_id_bad_charset_hyphen_panics() {
         &None,
         &None,
         &None,
+        &None,
+        &None,
     );
 }
 
@@ -348,10 +368,10 @@ fn test_init_invoice_id_non_ascii_multibyte_panics() {
     let client = deploy(&env);
     let (admin, sme) = (Address::generate(&env), Address::generate(&env));
     let (t, tr) = free_addresses(&env);
-    // "INV-💩" contains multi-byte UTF-8
+    // "INV-­ƒÆ®" contains multi-byte UTF-8
     client.init(
         &admin,
-        &soroban_sdk::String::from_str(&env, "INV_💩"),
+        &soroban_sdk::String::from_str(&env, "INV_­ƒÆ®"),
         &sme,
         &1000i128,
         &500i64,
@@ -359,6 +379,8 @@ fn test_init_invoice_id_non_ascii_multibyte_panics() {
         &t,
         &None,
         &tr,
+        &None,
+        &None,
         &None,
         &None,
         &None,
@@ -384,7 +406,7 @@ fn test_init_invoice_id_embedded_null_panics() {
 
     client.init(
         &admin, &s, &sme, &1000i128, &500i64, &0u64, &t, &None, &tr, &None, &None, &None, &None,
-        &None, &None,
+        &None, &None, &None,
     );
 }
 
@@ -408,6 +430,8 @@ fn test_init_stores_registry_some_and_getters() {
         &token,
         &Some(reg.clone()),
         &treasury,
+        &None,
+        &None,
         &None,
         &None,
         &None,
@@ -447,6 +471,7 @@ fn test_init_min_contribution_floor_stored() {
         &None,
         &None,
         &None,
+        &None,
     );
     assert_eq!(client.get_min_contribution_floor(), 1_000i128);
 }
@@ -476,11 +501,13 @@ fn test_init_min_contribution_floor_defaults_to_zero() {
         &None,
         &None,
         &None,
+        &None,
+        &None,
     );
     assert_eq!(client.get_min_contribution_floor(), 0i128);
 }
 
-/// `min_contribution = Some(0)` is rejected — the value must be positive when supplied.
+/// `min_contribution = Some(0)` is rejected ÔÇö the value must be positive when supplied.
 #[test]
 #[should_panic]
 fn test_init_min_contribution_zero_panics() {
@@ -502,6 +529,7 @@ fn test_init_min_contribution_zero_panics() {
         &tre,
         &None,
         &Some(0i128),
+        &None,
         &None,
         &None,
         &None,
@@ -535,10 +563,11 @@ fn test_init_min_contribution_exceeds_amount_panics() {
         &None,
         &None,
         &None,
+        &None,
     );
 }
 
-/// Floor equal to the invoice amount is the boundary — must be accepted.
+/// Floor equal to the invoice amount is the boundary ÔÇö must be accepted.
 #[test]
 fn test_init_min_contribution_equal_to_amount_accepted() {
     let env = Env::default();
@@ -559,6 +588,7 @@ fn test_init_min_contribution_equal_to_amount_accepted() {
         &tre,
         &None,
         &Some(5_000i128),
+        &None,
         &None,
         &None,
         &None,
@@ -605,6 +635,8 @@ fn test_get_funding_token_after_init_succeeds() {
         &None,
         &None,
         &None,
+        &None,
+        &None,
     );
     assert_eq!(client.get_funding_token(), token);
 }
@@ -624,6 +656,8 @@ fn test_get_treasury_after_init_succeeds() {
         &token,
         &None,
         &treasury,
+        &None,
+        &None,
         &None,
         &None,
         &None,
@@ -666,6 +700,8 @@ fn test_init_registry_none_roundtrip() {
         &None,
         &None,
         &None,
+        &None,
+        &None,
     );
     assert_eq!(client.get_registry_ref(), None);
 }
@@ -694,6 +730,8 @@ fn test_init_escrow_initialized_event_includes_bound_refs() {
         &token,
         &Some(registry.clone()),
         &treasury,
+        &None,
+        &None,
         &None,
         &None,
         &None,
@@ -739,6 +777,8 @@ fn test_init_escrow_initialized_event_registry_none() {
         &token,
         &None,
         &treasury,
+        &None,
+        &None,
         &None,
         &None,
         &None,
@@ -837,6 +877,8 @@ fn test_invoice_id_length_33_panics() {
         &None,
         &None,
         &None,
+        &None,
+        &None,
     );
 }
 
@@ -869,7 +911,7 @@ fn test_invoice_id_digits_only_accepted() {
 /// This covers common punctuation, operators, whitespace, and non-ASCII bytes.
 #[test]
 fn test_invoice_id_illegal_chars_all_rejected() {
-    // Characters that are NOT in [A-Za-z0-9_] — representative set covering
+    // Characters that are NOT in [A-Za-z0-9_] ÔÇö representative set covering
     // punctuation, operators, whitespace, and boundary ASCII values.
     let illegal: &[&str] = &[
         "INV-DASH",  // hyphen
@@ -954,7 +996,7 @@ proptest! {
     /// Any string with at least one character outside [A-Za-z0-9_] (length 1..=32) must panic.
     #[test]
     fn prop_invalid_charset_invoice_id_always_rejected(
-        // valid prefix + one illegal char + optional valid suffix, total ≤ 32
+        // valid prefix + one illegal char + optional valid suffix, total Ôëñ 32
         prefix in "[A-Za-z0-9_]{0,15}",
         bad_char in "[^A-Za-z0-9_]",
         suffix in "[A-Za-z0-9_]{0,15}",
@@ -986,11 +1028,11 @@ proptest! {
     }
 }
 
-// ── DataKey default-on-absence verification (docs/escrow-data-model.md) ──────
+// ÔöÇÔöÇ DataKey default-on-absence verification (docs/escrow-data-model.md) ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
 
 #[test]
 fn datakey_defaults_on_fresh_init() {
-    // Verifies that every key documented as "absent ⇒ default" actually returns
+    // Verifies that every key documented as "absent ÔçÆ default" actually returns
     // the documented default on a freshly initialised escrow with no optional
     // configuration supplied.
     let env = Env::default();
@@ -998,19 +1040,19 @@ fn datakey_defaults_on_fresh_init() {
     let investor = Address::generate(&env);
     default_init(&client, &env, &admin, &sme);
 
-    // Absent ⇒ false
+    // Absent ÔçÆ false
     assert!(!client.get_legal_hold());
     assert!(!client.is_investor_allowlisted(&investor));
     assert!(!client.is_allowlist_active());
     assert!(!client.is_investor_refunded(&investor));
 
-    // Absent ⇒ 0
+    // Absent ÔçÆ 0
     assert_eq!(client.get_contribution(&investor), 0i128);
     assert_eq!(client.get_min_contribution_floor(), 0i128);
     assert_eq!(client.get_unique_funder_count(), 0u32);
     assert_eq!(client.get_distributed_principal(), 0i128);
 
-    // Optional caps absent ⇒ None
+    // Optional caps absent ÔçÆ None
     assert!(client.get_max_unique_investors_cap().is_none());
     assert!(client.get_max_per_investor_cap().is_none());
 
@@ -1039,6 +1081,8 @@ fn datakey_distributed_principal_starts_at_zero_and_increments_on_refund() {
         &token.id,
         &None,
         &treasury,
+        &None,
+        &None,
         &None,
         &None,
         &None,

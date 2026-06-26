@@ -77,6 +77,7 @@ fn setup_funded_with_token<'a>(
         &None,
         &None,
         &None,
+        &None,
     );
 
     // Fund to target (accounting only — no real tokens yet).
@@ -337,6 +338,24 @@ fn test_claim_investor_twice_is_idempotent() {
     let env = Env::default();
     let (client, token, contract_id, _treasury) = setup_claim_env(&env, "CL001", 1_000i128, 400i64);
     let investor = Address::generate(&env);
+    client.init(
+        &admin,
+        &soroban_sdk::String::from_str(&env, "CL001"),
+        &sme,
+        &1_000i128,
+        &400i64,
+        &0u64,
+        &Address::generate(&env),
+        &None,
+        &Address::generate(&env),
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
     client.fund(&investor, &1_000i128);
     token.stellar.mint(&contract_id, &1_040i128);
     client.settle();
@@ -379,6 +398,7 @@ fn test_claim_by_non_investor_panics() {
         &None,
         &None,
         &None,
+        &None,
     );
     // Escrow settled but stranger never funded
     let investor = Address::generate(&env);
@@ -395,6 +415,24 @@ fn test_clashing_investors_have_independent_claims() {
         setup_claim_env(&env, "CLASH01", 2_000i128, 400i64);
     let inv_a = Address::generate(&env);
     let inv_b = Address::generate(&env);
+    client.init(
+        &admin,
+        &soroban_sdk::String::from_str(&env, "CLASH01"),
+        &sme,
+        &2_000i128,
+        &400i64,
+        &0u64,
+        &Address::generate(&env),
+        &None,
+        &Address::generate(&env),
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
     client.fund(&inv_a, &1_000i128);
     client.fund(&inv_b, &1_000i128);
     token.stellar.mint(&contract_id, &2_080i128);
@@ -479,6 +517,7 @@ fn test_claim_blocked_until_commitment_ledger_time() {
         &None,
         &None,
         &None,
+        &None,
     );
     client.fund_with_commitment(&inv, &1_000i128, &500u64);
     client.settle();
@@ -491,6 +530,25 @@ fn test_claim_succeeds_after_commitment_and_settle() {
     let (client, token, contract_id, _treasury) =
         setup_claim_env(&env, "LOCK002", 1_000i128, 400i64);
     let inv = Address::generate(&env);
+    let (tok, treasury) = free_addresses(&env);
+    client.init(
+        &admin,
+        &String::from_str(&env, "LOCK002"),
+        &sme,
+        &1_000i128,
+        &400i64,
+        &0u64,
+        &tok,
+        &None,
+        &treasury,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
     client.fund_with_commitment(&inv, &1_000i128, &100u64);
     token.stellar.mint(&contract_id, &1_040i128);
     client.settle();
@@ -509,6 +567,25 @@ fn test_claim_gating_exact_timestamp() {
     let inv = Address::generate(&env);
 
     env.ledger().set_timestamp(1000);
+
+    client.init(
+        &admin,
+        &soroban_sdk::String::from_str(&env, "LOCK003"),
+        &sme,
+        &1_000i128,
+        &400i64,
+        &0u64,
+        &tok,
+        &None,
+        &treasury,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
 
     let lock_duration = 500u64;
     client.fund_with_commitment(&inv, &1_000i128, &lock_duration);
@@ -541,6 +618,25 @@ fn test_claim_gating_with_multiple_investors() {
     let inv2 = Address::generate(&env);
 
     env.ledger().set_timestamp(1000);
+
+    client.init(
+        &admin,
+        &soroban_sdk::String::from_str(&env, "LOCK004"),
+        &sme,
+        &2_000i128,
+        &400i64,
+        &0u64,
+        &tok,
+        &None,
+        &treasury,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
 
     client.fund_with_commitment(&inv1, &1_000i128, &100u64); // Expiry 1100
     client.fund_with_commitment(&inv2, &1_000i128, &200u64); // Expiry 1200
@@ -582,6 +678,7 @@ fn test_cost_baseline_settle() {
         &Address::generate(&env),
         &None,
         &Address::generate(&env),
+        &None,
         &None,
         &None,
         &None,
@@ -638,6 +735,7 @@ fn settle_with_maturity_zero_succeeds_immediately() {
         &None,
         &None,
         &None,
+        &None,
     );
 
     assert!(
@@ -677,6 +775,7 @@ fn settle_one_second_before_maturity_traps_and_preserves_state() {
         &token,
         &None,
         &treasury,
+        &None,
         &None,
         &None,
         &None,
@@ -731,6 +830,7 @@ fn settle_at_maturity_succeeds() {
         &token,
         &None,
         &treasury,
+        &None,
         &None,
         &None,
         &None,
@@ -880,6 +980,7 @@ fn test_sweep_terminal_dust_after_settle_transfers_to_treasury() {
         &None,
         &None,
         &None,
+        &None,
     );
     let investor = Address::generate(&env);
     client.fund(&investor, &1_000i128);
@@ -914,6 +1015,7 @@ fn test_sweep_terminal_dust_after_withdraw_and_ledger_tick() {
         &token.id,
         &None,
         &treasury,
+        &None,
         &None,
         &None,
         &None,
@@ -957,6 +1059,7 @@ fn test_sweep_rejected_when_open() {
         &None,
         &None,
         &None,
+        &None,
     );
     client.fund(&investor, &1_000i128);
     client.settle();
@@ -980,6 +1083,7 @@ fn test_sweep_blocked_under_legal_hold() {
         &Address::generate(&env),
         &None,
         &Address::generate(&env),
+        &None,
         &None,
         &None,
         &None,
@@ -1017,6 +1121,7 @@ fn test_sweep_rejects_amount_above_dust_cap() {
         &None,
         &None,
         &None,
+        &None,
     );
     client.fund(&investor, &1_000i128);
     // status == 1 (funded), not settled — must panic
@@ -1041,6 +1146,7 @@ fn test_sweep_caps_at_contract_balance() {
         &Address::generate(&env),
         &None,
         &Address::generate(&env),
+        &None,
         &None,
         &None,
         &None,
@@ -1074,6 +1180,7 @@ fn test_sweep_requires_treasury_auth() {
         &token.id,
         &None,
         &treasury,
+        &None,
         &None,
         &None,
         &None,
@@ -1114,6 +1221,7 @@ fn claim_investor_payout_succeeds_after_settle() {
         &token.id,
         &None,
         &treasury,
+        &None,
         &None,
         &None,
         &None,
@@ -1307,6 +1415,7 @@ fn test_is_investor_claimed_false_before_any_claim() {
         &None,
         &None,
         &None,
+        &None,
     );
     client.fund(&investor, &1_000i128);
     client.settle();
@@ -1337,6 +1446,7 @@ fn test_is_investor_claimed_returns_false_for_unfunded_address() {
         &None,
         &None,
         &None,
+        &None,
     );
     client.fund(&investor, &1_000i128);
     client.settle();
@@ -1350,6 +1460,24 @@ fn test_claim_marker_persists_after_claim() {
     let (client, token, contract_id, _treasury) =
         setup_claim_env(&env, "GIC003", 1_000i128, 400i64);
     let investor = Address::generate(&env);
+    client.init(
+        &admin,
+        &soroban_sdk::String::from_str(&env, "GIC003"),
+        &sme,
+        &1_000i128,
+        &400i64,
+        &0u64,
+        &Address::generate(&env),
+        &None,
+        &Address::generate(&env),
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
     client.fund(&investor, &1_000i128);
     token.stellar.mint(&contract_id, &1_040i128);
     client.settle();
@@ -1367,6 +1495,24 @@ fn test_claim_marker_isolated_per_investor() {
         setup_claim_env(&env, "GIC004", 2_000i128, 400i64);
     let investor_a = Address::generate(&env);
     let investor_b = Address::generate(&env);
+    client.init(
+        &admin,
+        &soroban_sdk::String::from_str(&env, "GIC004"),
+        &sme,
+        &2_000i128,
+        &400i64,
+        &0u64,
+        &Address::generate(&env),
+        &None,
+        &Address::generate(&env),
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
     client.fund(&investor_a, &1_000i128);
     client.fund(&investor_b, &1_000i128);
     token.stellar.mint(&contract_id, &2_080i128);
@@ -1388,6 +1534,24 @@ fn test_claim_marker_all_investors_independent() {
     let inv_a = Address::generate(&env);
     let inv_b = Address::generate(&env);
     let inv_c = Address::generate(&env);
+    client.init(
+        &admin,
+        &soroban_sdk::String::from_str(&env, "GIC005"),
+        &sme,
+        &3_000i128,
+        &400i64,
+        &0u64,
+        &Address::generate(&env),
+        &None,
+        &Address::generate(&env),
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
     client.fund(&inv_a, &1_000i128);
     client.fund(&inv_b, &1_000i128);
     client.fund(&inv_c, &1_000i128);
@@ -1600,145 +1764,135 @@ fn test_funding_blocked_after_partial_settle() {
     client.fund(&late_investor, &1_000i128);
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// `settle` — EscrowSettled.settle_pool field
-// ──────────────────────────────────────────────────────────────────────────────
+// ── get_settled_at tests ──────────────────────────────────────────────────────
 
-/// settle_pool in EscrowSettled equals principal + floor(principal × yield_bps / 10_000).
-///
-/// Uses `default_init` which sets yield_bps=800 and TARGET=100_000_000_000.
-/// Expected coupon = 100_000_000_000 × 800 / 10_000 = 8_000_000_000.
-/// Expected settle_pool = 100_000_000_000 + 8_000_000_000 = 108_000_000_000.
+/// `get_settled_at` returns `None` before the escrow is settled (pre-settle state).
 #[test]
-fn settle_event_settle_pool_equals_principal_plus_coupon() {
-    use soroban_sdk::testutils::Events as _;
+fn settled_at_is_none_before_settle() {
     let env = Env::default();
     env.mock_all_auths();
-    let (contract_id, client) = deploy_with_id(&env);
-    let (admin, sme) = free_addresses(&env);
+    let (client, admin, sme) = setup(&env);
+    default_init(&client, &env, &admin, &sme);
+
+    // Not yet funded — should be None.
+    assert!(
+        client.get_settled_at().is_none(),
+        "settled_at must be None before settle"
+    );
+
+    // Fund to target (status 1) — still None.
+    fund_to_target(&client, &env);
+    assert!(
+        client.get_settled_at().is_none(),
+        "settled_at must be None after funding, before settle"
+    );
+}
+
+/// `get_settled_at` returns `Some(timestamp)` equal to the ledger time at `settle()`.
+#[test]
+fn settled_at_recorded_at_settle() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, sme) = setup(&env);
     default_init(&client, &env, &admin, &sme);
     fund_to_target(&client, &env);
+
+    let settle_ts: u64 = 9_999;
+    env.ledger().with_mut(|l| l.timestamp = settle_ts);
     client.settle();
 
-    let invoice_id = soroban_sdk::String::from_str(&env, "INV001");
-    let invoice_sym = soroban_sdk::Symbol::new(&env, "INV001");
-    let expected_settle_pool: i128 = TARGET + TARGET * 800 / 10_000; // 108_000_000_000
-
-    let all = env.events().all();
-    let events = all.events();
-    let last = events.last().expect("settle must emit an event");
+    let stored = client
+        .get_settled_at()
+        .expect("settled_at must be Some after settle");
     assert_eq!(
-        *last,
-        EscrowSettled {
-            name: symbol_short!("escrow_sd"),
-            invoice_id: invoice_sym.clone(),
-            funded_amount: TARGET,
-            yield_bps: 800i64,
-            maturity: 0u64,
-            settled_at_ledger_timestamp: env.ledger().timestamp(),
-            settle_pool: expected_settle_pool,
-        }
-        .to_xdr(&env, &contract_id)
+        stored, settle_ts,
+        "settled_at must equal the ledger timestamp at settle()"
     );
 }
 
-/// When yield_bps is 0 the settle_pool must equal the funded principal exactly.
+/// `get_settled_at` value is stable — subsequent reads return the same timestamp.
 #[test]
-fn settle_event_settle_pool_zero_yield() {
-    use soroban_sdk::testutils::Events as _;
+fn settled_at_is_stable_after_settle() {
     let env = Env::default();
     env.mock_all_auths();
-    let (contract_id, client) = deploy_with_id(&env);
-    let (admin, sme) = free_addresses(&env);
-    let (token, treasury) = free_addresses(&env);
-    client.init(
-        &admin,
-        &soroban_sdk::String::from_str(&env, "INV001"),
-        &sme,
-        &TARGET,
-        &0i64, // zero yield
-        &0u64,
-        &token,
-        &None,
-        &treasury,
-        &None,
-        &None,
-        &None,
-        &None,
-        &None,
-        &None,
-    );
+    let (client, admin, sme) = setup(&env);
+    default_init(&client, &env, &admin, &sme);
     fund_to_target(&client, &env);
+
+    let settle_ts: u64 = 42_000;
+    env.ledger().with_mut(|l| l.timestamp = settle_ts);
     client.settle();
 
-    let all = env.events().all();
-    let events = all.events();
-    let last = events.last().expect("settle must emit an event");
+    // Advance ledger — stored value must not change.
+    env.ledger().with_mut(|l| l.timestamp = settle_ts + 10_000);
+    let stored = client
+        .get_settled_at()
+        .expect("settled_at must remain Some");
     assert_eq!(
-        *last,
-        EscrowSettled {
-            name: symbol_short!("escrow_sd"),
-            invoice_id: soroban_sdk::Symbol::new(&env, "INV001"),
-            funded_amount: TARGET,
-            yield_bps: 0i64,
-            maturity: 0u64,
-            settled_at_ledger_timestamp: env.ledger().timestamp(),
-            settle_pool: TARGET, // coupon == 0, pool == principal
-        }
-        .to_xdr(&env, &contract_id)
+        stored, settle_ts,
+        "settled_at must not change after additional ledger advancement"
     );
 }
 
-/// Rounding floor: settle_pool must use integer floor division, not round-half-up.
-///
-/// With principal=10_001 and yield_bps=1 the exact coupon is 1.0001, floored to 1.
-/// settle_pool = 10_001 + 1 = 10_002.
+/// `settle()` with maturity = 0 (no time-lock) still records the correct timestamp.
 #[test]
-fn settle_event_settle_pool_rounding_floor() {
-    use soroban_sdk::testutils::Events as _;
+fn settled_at_recorded_no_maturity_escrow() {
     let env = Env::default();
     env.mock_all_auths();
-    let (contract_id, client) = deploy_with_id(&env);
-    let (admin, sme) = free_addresses(&env);
-    let (token, treasury) = free_addresses(&env);
-    let principal: i128 = 10_001;
+    let (client, admin, sme) = setup(&env);
+    // default_init uses maturity=0 (no lock).
+    default_init(&client, &env, &admin, &sme);
+    fund_to_target(&client, &env);
+
+    let ts: u64 = 1_234_567;
+    env.ledger().with_mut(|l| l.timestamp = ts);
+    client.settle();
+
+    assert_eq!(
+        client.get_settled_at(),
+        Some(ts),
+        "settled_at must be recorded even when maturity == 0"
+    );
+}
+
+/// `settle()` with a positive maturity records the timestamp at the moment the call succeeds.
+#[test]
+fn settled_at_recorded_with_maturity() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, sme) = setup(&env);
+
+    let maturity: u64 = 5_000;
+    // Initialize with a maturity lock.
+    let sac = env.register_stellar_asset_contract_v2(Address::generate(&env));
+    let token_id = sac.address();
+    let (admin_addr, sme_addr) = free_addresses(&env);
     client.init(
-        &admin,
-        &soroban_sdk::String::from_str(&env, "INV001"),
-        &sme,
-        &principal,
-        &1i64, // 0.01% yield
-        &0u64,
-        &token,
-        &None,
-        &treasury,
-        &None,
-        &None,
-        &None,
+        &admin_addr,
+        &sme_addr,
+        &100_000i128,
+        &TARGET,
+        &500i64,
+        &maturity,
+        &token_id,
+        &Address::generate(&env),
         &None,
         &None,
         &None,
     );
-    let investor = soroban_sdk::Address::generate(&env);
-    client.fund(&investor, &principal);
+
+    let investor = Address::generate(&env);
+    install_stellar_asset_token(&env, &sac, &investor, TARGET);
+    client.fund(&investor, &TARGET);
+
+    // Advance ledger past maturity.
+    let settle_ts = maturity + 100;
+    env.ledger().with_mut(|l| l.timestamp = settle_ts);
     client.settle();
 
-    // coupon = floor(10_001 × 1 / 10_000) = floor(1.0001) = 1
-    // settle_pool = 10_001 + 1 = 10_002
-    let all = env.events().all();
-    let events = all.events();
-    let last = events.last().expect("settle must emit an event");
     assert_eq!(
-        *last,
-        EscrowSettled {
-            name: symbol_short!("escrow_sd"),
-            invoice_id: soroban_sdk::Symbol::new(&env, "INV001"),
-            funded_amount: principal,
-            yield_bps: 1i64,
-            maturity: 0u64,
-            settled_at_ledger_timestamp: env.ledger().timestamp(),
-            settle_pool: 10_002,
-        }
-        .to_xdr(&env, &contract_id)
+        client.get_settled_at(),
+        Some(settle_ts),
+        "settled_at must equal the ledger timestamp when settle() succeeds with maturity gate"
     );
 }

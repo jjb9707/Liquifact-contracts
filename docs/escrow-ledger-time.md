@@ -62,6 +62,44 @@ investor is never time-gated and may claim immediately after settlement.
 The `recorded_at` field is set to `env.ledger().timestamp()` for
 indexing only. It does not gate any operations.
 
+### 4. Settlement Timestamp — `SettledAt` and `get_settled_at`
+
+When `settle()` transitions an escrow from status 1 (funded) to status 2 (settled), 
+the contract captures the ledger timestamp for audit and accounting:
+
+```rust
+let now = env.ledger().timestamp();
+env.storage().instance().set(&DataKey::SettledAt, &now);
+```
+
+**Write-once policy:** this key is set exactly once per escrow, because `settle()` can only be 
+called from status 1. The stored timestamp never changes once settlement occurs.
+
+#### Reading the settlement timestamp
+
+The view function `get_settled_at(env: Env) -> Option<u64>` retrieves the settlement timestamp:
+
+```rust
+pub fn get_settled_at(env: Env) -> Option<u64> {
+    env.storage().instance().get(&DataKey::SettledAt)
+}
+```
+
+| Escrow state | Return value | Interpretation |
+|--------------|--------------|----------------|
+| Not yet settled (status 0 or 1) | `None` | Settlement has not occurred |
+| Settled (status 2, 3, or 4 after settlement) | `Some(timestamp)` | Ledger timestamp when `settle()` was called |
+| Legacy instance (deployed before this feature) | `None` | Additive-key policy — no migration required |
+
+**Use cases:**
+- Claim accounting: determine settlement timestamp for investor payouts
+- Dispute resolution: authoritative on-chain record of settlement moment
+- Reporting: calculate time-to-settlement, track settlement patterns
+- Event pruning safety: settlement timestamp persists even if `EscrowSettled` event is pruned
+
+**Note:** The `EscrowSettled` event also includes `settled_at_ledger_timestamp`, but the storage 
+key provides a permanent, query-friendly view that survives network event retention policies.
+
 ---
 
 ## `claim_investor_payout` — Idempotency
@@ -268,5 +306,8 @@ ledger timestamp (seconds since Unix epoch, inclusive).
 - **Idempotency is not trustless skipping:** the early return in
   `claim_investor_payout` only fires after `investor.require_auth()`;
   it cannot be exploited to skip the auth check.
+- **Settlement timestamp write-once:** `DataKey::SettledAt` is only written inside `settle()` at
+  the status 1→2 transition. There is no path to overwrite or delete the key after it is set.
+  `get_settled_at` is a pure read — it performs no mutation and has no auth requirement.
 - **Token economics:** time-based yield calculations are out of scope.
   See `escrow/src/external_calls.rs` for token transfer assumptions.

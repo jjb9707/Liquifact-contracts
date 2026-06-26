@@ -1,12 +1,12 @@
 //! Legal-hold matrix tests.
 //!
 //! Each risk-bearing function gets two focused tests:
-//!   `*_blocked_under_hold`  — hold=true  → must panic with the exact contract message
-//!   `*_passes_when_hold_cleared` — hold=false → operation succeeds normally
+//!   `*_blocked_under_hold`  ÔÇö hold=true  ÔåÆ must panic with the exact contract message
+//!   `*_passes_when_hold_cleared` ÔÇö hold=false ÔåÆ operation succeeds normally
 //!
 //! Edge-case tests verify:
 //!   - Hold check fires before status validation (fund, settle, withdraw)
-//!   - Idempotent toggling (set true→true, clear false→false)
+//!   - Idempotent toggling (set trueÔåÆtrue, clear falseÔåÆfalse)
 //!   - Non-gated operations (`update_maturity`, admin handover, getters) are NOT blocked
 //!   - Claim idempotency survives a hold toggle
 //!   - A single hold toggle blocks all gated ops in separate escrows
@@ -14,16 +14,16 @@
 //! Auth tests verify that only the admin can set or clear the hold.
 //!
 //! Gated functions (6 entrypoints, 5 unique messages):
-//!   fund / fund_with_commitment  → "Legal hold blocks new funding while active"
-//!   settle                       → "Legal hold blocks settlement finalization"
-//!   withdraw                     → "Legal hold blocks SME withdrawal"
-//!   claim_investor_payout        → "Legal hold blocks investor claims"
-//!   sweep_terminal_dust          → "Legal hold blocks treasury dust sweep"
+//!   fund / fund_with_commitment  ÔåÆ "Legal hold blocks new funding while active"
+//!   settle                       ÔåÆ "Legal hold blocks settlement finalization"
+//!   withdraw                     ÔåÆ "Legal hold blocks SME withdrawal"
+//!   claim_investor_payout        ÔåÆ "Legal hold blocks investor claims"
+//!   sweep_terminal_dust          ÔåÆ "Legal hold blocks treasury dust sweep"
 
 use super::*;
 use soroban_sdk::token::StellarAssetClient;
 
-// ── helpers ──────────────────────────────────────────────────────────────────
+// ÔöÇÔöÇ helpers ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
 
 /// Initialise a minimal escrow (open, maturity=0, no tiers).
 fn init_open(
@@ -45,6 +45,8 @@ fn init_open(
         &token,
         &None,
         &treasury,
+        &None,
+        &None,
         &None,
         &None,
         &None,
@@ -82,6 +84,7 @@ fn init_open_with_clear_delay(
         &None,
         &legal_hold_clear_delay,
         &None,
+        &None,
     );
     (token, treasury)
 }
@@ -111,6 +114,8 @@ fn init_funded_with_real_token<'a>(
         &token_id,
         &None,
         &treasury,
+        &None,
+        &None,
         &None,
         &None,
         &None,
@@ -166,13 +171,15 @@ fn init_settled<'a>(
         &None,
         &None,
         &None,
+        &None,
+        &None,
     );
     client.fund(investor, &TARGET);
     client.settle();
     (client, escrow_id, token, treasury)
 }
 
-// ── 1. fund ──────────────────────────────────────────────────────────────────
+// ÔöÇÔöÇ 1. fund ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
 
 #[test]
 #[should_panic]
@@ -198,7 +205,7 @@ fn fund_passes_when_hold_cleared() {
     assert_eq!(escrow.status, 1);
 }
 
-// ── 2. fund_with_commitment ───────────────────────────────────────────────────
+// ÔöÇÔöÇ 2. fund_with_commitment ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
 
 #[test]
 #[should_panic]
@@ -223,7 +230,7 @@ fn fund_with_commitment_passes_when_hold_cleared() {
     assert_eq!(escrow.status, 1);
 }
 
-// ── 3. settle ────────────────────────────────────────────────────────────────
+// ÔöÇÔöÇ 3. settle ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
 
 #[test]
 #[should_panic]
@@ -248,7 +255,7 @@ fn settle_passes_when_hold_cleared() {
     assert_eq!(escrow.status, 2);
 }
 
-// ── 4. withdraw ──────────────────────────────────────────────────────────────
+// ÔöÇÔöÇ 4. withdraw ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
 
 #[test]
 #[should_panic]
@@ -275,7 +282,7 @@ fn withdraw_passes_when_hold_cleared() {
     assert_eq!(escrow.status, 3);
 }
 
-// ── 5. claim_investor_payout ─────────────────────────────────────────────────
+// ÔöÇÔöÇ 5. claim_investor_payout ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
 
 #[test]
 #[should_panic]
@@ -302,7 +309,7 @@ fn claim_investor_payout_passes_when_hold_cleared() {
     assert!(client.is_investor_claimed(&investor));
 }
 
-// ── 6. sweep_terminal_dust ───────────────────────────────────────────────────
+// ÔöÇÔöÇ 6. sweep_terminal_dust ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
 
 #[test]
 #[should_panic]
@@ -338,7 +345,7 @@ fn sweep_terminal_dust_passes_when_hold_cleared() {
     assert_eq!(stellar.balance(&treasury), 500i128);
 }
 
-// ── 7. Admin-only: set_legal_hold ────────────────────────────────────────────
+// ÔöÇÔöÇ 7. Admin-only: set_legal_hold ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
 
 #[test]
 fn set_legal_hold_by_admin_succeeds() {
@@ -356,13 +363,13 @@ fn set_legal_hold_emits_event_with_correct_flag() {
     let env = Env::default();
     let (client, admin, sme) = setup(&env);
     init_open(&client, &env, &admin, &sme, "LHA002");
-    // set → active=1
+    // set ÔåÆ active=1
     client.set_legal_hold(&true);
     assert!(
         env.auths().iter().any(|(addr, _)| *addr == admin),
         "admin auth must be recorded for set_legal_hold"
     );
-    // clear → active=0
+    // clear ÔåÆ active=0
     client.clear_legal_hold();
     assert!(!client.get_legal_hold());
 }
@@ -378,7 +385,7 @@ fn set_legal_hold_by_non_admin_panics() {
     client.set_legal_hold(&true);
 }
 
-// ── 8. Admin-only: clear_legal_hold ──────────────────────────────────────────
+// ÔöÇÔöÇ 8. Admin-only: clear_legal_hold ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
 
 #[test]
 fn clear_legal_hold_by_admin_succeeds() {
@@ -449,7 +456,7 @@ fn clear_legal_hold_by_non_admin_panics() {
     client.clear_legal_hold();
 }
 
-// ── 9. Default state ─────────────────────────────────────────────────────────
+// ÔöÇÔöÇ 9. Default state ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
 
 #[test]
 fn legal_hold_defaults_to_false_after_init() {
@@ -459,7 +466,7 @@ fn legal_hold_defaults_to_false_after_init() {
     assert!(!client.get_legal_hold());
 }
 
-// ── 10. No-bypass: hold survives state transitions ───────────────────────────
+// ÔöÇÔöÇ 10. No-bypass: hold survives state transitions ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
 
 /// A hold set while open must still block settle after the escrow becomes funded.
 #[test]
@@ -470,7 +477,7 @@ fn hold_set_before_funding_still_blocks_settle_after_funded() {
     init_open(&client, &env, &admin, &sme, "LHX001");
     // Hold is set while escrow is still open.
     client.set_legal_hold(&true);
-    // fund() itself is blocked — clear hold, fund, then re-apply hold.
+    // fund() itself is blocked ÔÇö clear hold, fund, then re-apply hold.
     client.clear_legal_hold();
     client.fund(&investor, &TARGET);
     assert_eq!(client.get_escrow().status, 1);
@@ -493,13 +500,13 @@ fn hold_can_be_toggled_and_re_blocks_operations() {
     let investor = Address::generate(&env);
     init_funded(&client, &env, &admin, &sme, &investor, "LHX002");
 
-    // First toggle: set → clear → settle succeeds.
+    // First toggle: set ÔåÆ clear ÔåÆ settle succeeds.
     client.set_legal_hold(&true);
     client.clear_legal_hold();
     let settled = client.settle();
     assert_eq!(settled.status, 2);
 
-    // Second toggle: re-set → claim is blocked.
+    // Second toggle: re-set ÔåÆ claim is blocked.
     client.set_legal_hold(&true);
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.claim_investor_payout(&investor);
@@ -509,7 +516,7 @@ fn hold_can_be_toggled_and_re_blocks_operations() {
         "claim must be blocked after re-setting hold"
     );
 
-    // Clear again → claim succeeds.
+    // Clear again ÔåÆ claim succeeds.
     client.clear_legal_hold();
     client.claim_investor_payout(&investor);
     assert!(client.is_investor_claimed(&investor));
@@ -544,7 +551,7 @@ fn hold_persists_after_admin_handover() {
     assert_eq!(settled.status, 2);
 }
 
-// ── 11. Edge-case: hold check fires before amount / status / auth checks ─────
+// ÔöÇÔöÇ 11. Edge-case: hold check fires before amount / status / auth checks ÔöÇÔöÇÔöÇÔöÇÔöÇ
 
 /// Hold must block `sweep_terminal_dust` before the zero-amount guard fires.
 #[test]
@@ -571,7 +578,7 @@ fn hold_blocks_settle_before_status_check_on_open_escrow() {
     let (client, admin, sme) = setup(&env);
     init_open(&client, &env, &admin, &sme, "LHS003");
     client.set_legal_hold(&true);
-    // Escrow is open (status 0) — "Escrow must be funded" would fire next,
+    // Escrow is open (status 0) ÔÇö "Escrow must be funded" would fire next,
     // but hold must panic first.
     client.settle();
 }
@@ -589,7 +596,7 @@ fn hold_blocks_withdraw_before_status_check_on_open_escrow() {
 
 /// Hold must block `fund` before the status guard fires (escrow already funded).
 /// Note: the `amount > 0` check fires before the hold check in `fund_impl`,
-/// so zero-amount is NOT a valid test — use a fully-funded escrow instead.
+/// so zero-amount is NOT a valid test ÔÇö use a fully-funded escrow instead.
 #[test]
 #[should_panic]
 fn hold_blocks_fund_before_status_check_on_funded_escrow() {
@@ -598,12 +605,12 @@ fn hold_blocks_fund_before_status_check_on_funded_escrow() {
     let investor = Address::generate(&env);
     init_funded(&client, &env, &admin, &sme, &investor, "LHF003");
     client.set_legal_hold(&true);
-    // Escrow is funded (status 1) — "Escrow not open for funding" would fire next,
+    // Escrow is funded (status 1) ÔÇö "Escrow not open for funding" would fire next,
     // but hold must panic first.
     client.fund(&investor, &1i128);
 }
 
-// ── 12. Idempotent toggling ──────────────────────────────────────────────────
+// ÔöÇÔöÇ 12. Idempotent toggling ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
 
 #[test]
 fn set_legal_hold_true_when_already_true_is_idempotent() {
@@ -622,14 +629,14 @@ fn clear_legal_hold_when_already_false_is_idempotent() {
     let env = Env::default();
     let (client, admin, sme) = setup(&env);
     init_open(&client, &env, &admin, &sme, "LHI002");
-    // Hold defaults to false — clear must not panic.
+    // Hold defaults to false ÔÇö clear must not panic.
     client.clear_legal_hold();
     assert!(!client.get_legal_hold());
     client.clear_legal_hold();
     assert!(!client.get_legal_hold());
 }
 
-// ── 13. Non-gated operations are NOT blocked by hold ─────────────────────────
+// ÔöÇÔöÇ 13. Non-gated operations are NOT blocked by hold ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
 
 /// `update_maturity`, admin handover, and getters must all work under hold.
 #[test]
@@ -661,7 +668,7 @@ fn non_risk_operations_not_blocked_by_hold() {
     assert_eq!(client.get_pending_admin(), None);
 }
 
-// ── 14. Re-entrancy / double-spend: claim idempotent after hold cleared ───────
+// ÔöÇÔöÇ 14. Re-entrancy / double-spend: claim idempotent after hold cleared ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
 
 /// After clearing a hold, the idempotent claim guard must still prevent
 /// double-spend (the `is_claimed` marker survives the hold toggle).
@@ -686,7 +693,7 @@ fn claim_after_hold_cleared_still_idempotent() {
     assert!(client.is_investor_claimed(&investor));
 }
 
-// ── 15. Multiple gated operations blocked by one hold toggle ──────────────────
+// ÔöÇÔöÇ 15. Multiple gated operations blocked by one hold toggle ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
 
 /// A single hold (set once) must block all risk-bearing entrypoints that the
 /// escrow state would otherwise permit. We verify this across three separate
