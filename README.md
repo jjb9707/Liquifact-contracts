@@ -178,6 +178,9 @@ liquifact-contracts/
 | `get_escrow` | Read current escrow state. |
 | `get_version` | Read stored `DataKey::Version`. |
 
+
+**Read-only views:** See [`docs/escrow-read-api.md`](docs/escrow-read-api.md) for the complete catalog of all 31 public read views with signatures, return types, and default/absent semantics.
+
 ---
 
 ## Storage guardrails

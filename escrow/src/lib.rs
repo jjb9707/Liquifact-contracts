@@ -379,7 +379,7 @@ pub enum EscrowError {
     /// Computing the legal-hold clear ready-at timestamp would overflow.
     LegalHoldClearDelayOverflow = 152,
     /// Funding deadline has passed, new deposits are rejected.
-    FundingDeadlinePassed = 164,
+    FundingDeadlinePassed = 153,
 
     /// A legal hold blocks rotating the beneficiary (SME) address.
     LegalHoldBlocksBeneficiaryRotation = 160,
@@ -1351,21 +1351,10 @@ impl LiquifactEscrow {
         escrow
     }
 
-    // -----------------------------------------------------------------------
-    // Collateral metadata (no token movement)
-    // -----------------------------------------------------------------------
-
-    /// Record an off-chain collateral pledge for this invoice.
+    /// Returns the full escrow snapshot ([`InvoiceEscrow`]) from [`DataKey::Escrow`].
     ///
-    /// Metadata-only: no tokens are moved or reserved. Requires SME auth.
-    /// Overwrites any previously recorded pledge.
-    /// Emits [`CollateralRecordedEvt`].
-    pub fn record_sme_collateral_commitment(env: Env, amount: i128) -> Result<(), EscrowError> {
-        let escrow = load_escrow_require_sme(&env)?;
-        let pledge = CollateralPledge {
-            invoice_id: escrow.invoice_id.clone(),
-            amount,
-        };
+    /// Emits [`EscrowError::EscrowNotInitialized`] (code 20) if called before [`LiquifactEscrow::init`].
+    pub fn get_escrow(env: Env) -> InvoiceEscrow {
         env.storage()
             .instance()
             .set(&DataKey::SmeCollateralPledge, &pledge);
@@ -1809,6 +1798,9 @@ impl LiquifactEscrow {
         .publish(&env);
     }
 
+    /// Returns `true` when the append-log entry at `index` has been revoked via
+    /// [`LiquifactEscrow::revoke_attestation_digest`].
+    /// Defaults to `false` when the key is absent (not revoked).
     pub fn is_attestation_revoked(env: Env, index: u32) -> bool {
         env.storage()
             .instance()
@@ -1816,6 +1808,8 @@ impl LiquifactEscrow {
             .unwrap_or(false)
     }
 
+    /// Returns `true` when the investor has exercised [`LiquifactEscrow::claim_investor_payout`].
+    /// Stored in persistent storage. Defaults to `false` when absent.
     pub fn is_investor_claimed(env: Env, investor: Address) -> bool {
         Self::get_persistent_investor_claimed(&env, investor)
     }
@@ -1986,6 +1980,9 @@ impl LiquifactEscrow {
         .publish(&env);
     }
 
+    /// Returns `true` when the investor allowlist gate is enabled.
+    /// When active, only addresses with [`is_investor_allowlisted`] set to true may fund the escrow.
+    /// Defaults to `false` when the key is absent.
     pub fn is_allowlist_active(env: Env) -> bool {
         env.storage()
             .instance()
@@ -2049,6 +2046,9 @@ impl LiquifactEscrow {
         }
     }
 
+    /// Returns `true` when `investor` is permitted to fund when the allowlist gate is active.
+    /// Stored in persistent storage (independent TTL per address).
+    /// Defaults to `false` when the key is absent.
     pub fn is_investor_allowlisted(env: Env, investor: Address) -> bool {
         env.storage()
             .persistent()
@@ -2297,11 +2297,7 @@ impl LiquifactEscrow {
         let n = entries.len();
 
         ensure(&env, n > 0, EscrowError::FundingBatchEmpty);
-        ensure(
-            &env,
-            n <= MAX_FUND_BATCH,
-            EscrowError::FundingBatchTooLarge,
-        );
+        ensure(&env, n <= MAX_FUND_BATCH, EscrowError::FundingBatchTooLarge);
 
         let mut escrow = Self::get_escrow(env.clone());
 
