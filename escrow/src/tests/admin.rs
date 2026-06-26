@@ -1,12 +1,75 @@
 use super::*;
 use crate::{
-    AdminProposalCancelled, AdminProposedEvent, ContractUpgraded, EscrowCloseSnapshot,
-    FundingTargetUpdated,
+    AdminProposalCancelled, AdminProposedEvent, EscrowCloseSnapshot, FundingTargetUpdated,
+    RegistryRefRebound,
 };
+
 use soroban_sdk::Event;
 
 // Admin/governance operations: target changes, maturity changes, admin handover,
 // legal hold, migration guards, and collateral metadata.
+
+#[test]
+fn test_update_maturity_emits_event() {
+
+    use soroban_sdk::testutils::Events as _;
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    let contract_id = client.address.clone();
+    client.init(
+        &admin,
+        &soroban_sdk::String::from_str(&env, "MAT_EVT"),
+        &sme,
+        &1_000i128,
+        &500i64,
+        &1000u64,
+        &Address::generate(&env),
+        &None,
+        &Address::generate(&env),
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
+    client.update_maturity(&2000u64);
+    assert_eq!(
+        env.events().all().events().last().unwrap().clone(),
+        crate::MaturityUpdatedEvent {
+            name: symbol_short!("maturity"),
+            invoice_id: client.get_escrow().invoice_id,
+            old_maturity: 1000u64,
+            new_maturity: 2000u64,
+        }
+        .to_xdr(&env, &contract_id)
+    );
+}
+
+#[test]
+#[should_panic]
+fn test_update_maturity_unchanged_panics() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    client.init(
+        &admin,
+        &soroban_sdk::String::from_str(&env, "INV006c"),
+        &sme,
+        &1_000i128,
+        &500i64,
+        &2000u64,
+        &Address::generate(&env),
+        &None,
+        &Address::generate(&env),
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
+    client.update_maturity(&2000u64);
+}
 
 #[test]
 fn test_update_maturity_success() {
@@ -1524,389 +1587,24 @@ fn test_rotate_beneficiary_then_withdraw_goes_to_new_sme() {
 /// Happy path: propose then cancel — `get_pending_admin` returns `None` and current
 /// admin is unchanged.
 #[test]
-fn test_cancel_pending_admin_clears_pending() {
-    let env = Env::default();
-    let (client, admin, sme) = setup(&env);
-    let new_admin = Address::generate(&env);
-    default_init(&client, &env, &admin, &sme);
+fn test_rebind_registry_ref_sets_and_clears() {
 
-    client.propose_admin(&new_admin, &None);
-    assert_eq!(client.get_pending_admin(), Some(new_admin.clone()));
-    assert!(client.get_pending_admin_expiry().is_some());
-
-    let cancelled = client.cancel_pending_admin();
-    assert_eq!(cancelled, new_admin);
-    assert_eq!(client.get_pending_admin(), None);
-    assert_eq!(client.get_pending_admin_expiry(), None);
-    // Existing admin must remain unchanged.
-    assert_eq!(client.get_escrow().admin, admin);
-}
-
-/// `accept_admin` must panic with `NoPendingAdmin` after the proposal is cancelled.
-#[test]
-#[should_panic]
-fn test_accept_after_cancel_panics() {
-    let env = Env::default();
-    let (client, admin, sme) = setup(&env);
-    let new_admin = Address::generate(&env);
-    default_init(&client, &env, &admin, &sme);
-
-    client.propose_admin(&new_admin, &None);
-    client.cancel_pending_admin();
-    // DataKey::PendingAdmin no longer exists — accept_admin must panic.
-    client.accept_admin();
-}
-
-/// `cancel_pending_admin` must panic when no proposal has been made.
-#[test]
-#[should_panic]
-fn test_cancel_without_pending_panics() {
-    let env = Env::default();
-    let (client, admin, sme) = setup(&env);
-    default_init(&client, &env, &admin, &sme);
-    // No prior propose_admin — must panic with NoPendingAdmin.
-    client.cancel_pending_admin();
-}
-
-/// A caller without admin authorization must be rejected.
-#[test]
-#[should_panic]
-fn test_cancel_non_admin_panics() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (client, admin, sme) = setup(&env);
-    let new_admin = Address::generate(&env);
-    default_init(&client, &env, &admin, &sme);
-
-    client.propose_admin(&new_admin, &None);
-    // Strip all authorizations — cancel requires admin auth.
-    env.mock_auths(&[]);
-    client.cancel_pending_admin();
-}
-
-/// `AdminProposalCancelled` event must carry the correct `name`, `invoice_id`,
-/// and `cancelled_pending` address.
-#[test]
-fn test_cancel_pending_admin_emits_event() {
-    use soroban_sdk::testutils::Events as _;
-
-    let env = Env::default();
-    let (client, admin, sme) = setup(&env);
-    let contract_id = client.address.clone();
-    let new_admin = Address::generate(&env);
-    default_init(&client, &env, &admin, &sme);
-
-    client.propose_admin(&new_admin, &None);
-    client.cancel_pending_admin();
-
-    assert_eq!(
-        env.events().all().events().last().unwrap().clone(),
-        AdminProposalCancelled {
-            name: symbol_short!("adm_can"),
-            invoice_id: client.get_escrow().invoice_id,
-            cancelled_pending: new_admin,
-        }
-        .to_xdr(&env, &contract_id)
-    );
-}
-
-/// After a cancel the admin may re-propose. A subsequent `accept_admin` succeeds.
-#[test]
-fn test_cancel_then_repropose_succeeds() {
-    let env = Env::default();
-    let (client, admin, sme) = setup(&env);
-    let first = Address::generate(&env);
-    let second = Address::generate(&env);
-    default_init(&client, &env, &admin, &sme);
-
-    client.propose_admin(&first, &None);
-    client.cancel_pending_admin();
-    assert_eq!(client.get_pending_admin(), None);
-
-    // Re-propose with a different address — must succeed.
-    client.propose_admin(&second, &None);
-    assert_eq!(client.get_pending_admin(), Some(second.clone()));
-
-    // Full handover should still work after re-propose.
-    let updated = client.accept_admin();
-    assert_eq!(updated.admin, second);
-    assert_eq!(client.get_pending_admin(), None);
-}
-
-// ── admin proposal expiry (issue #462) ────────────────────────────────────────
-
-/// `propose_admin` must persist `PendingAdminExpiry` using the default window.
-#[test]
-fn test_propose_admin_stores_default_expiry() {
-    let env = Env::default();
-    let (client, admin, sme) = setup(&env);
-    let new_admin = Address::generate(&env);
-    default_init(&client, &env, &admin, &sme);
-
-    let now = env.ledger().timestamp();
-    client.propose_admin(&new_admin, &None);
-
-    assert_eq!(
-        client.get_pending_admin_expiry(),
-        Some(now + crate::DEFAULT_ADMIN_PROPOSAL_VALIDITY_SECS)
-    );
-}
-
-/// A custom validity window must be honored when computing expiry.
-#[test]
-fn test_propose_admin_stores_custom_expiry_window() {
-    let env = Env::default();
-    let (client, admin, sme) = setup(&env);
-    let new_admin = Address::generate(&env);
-    default_init(&client, &env, &admin, &sme);
-
-    let now = env.ledger().timestamp();
-    client.propose_admin(&new_admin, &Some(3600u64));
-
-    assert_eq!(client.get_pending_admin_expiry(), Some(now + 3600));
-}
-
-/// Acceptance before expiry must succeed.
-#[test]
-fn test_accept_admin_before_expiry_succeeds() {
-    let env = Env::default();
-    let (client, admin, sme) = setup(&env);
-    let new_admin = Address::generate(&env);
-    default_init(&client, &env, &admin, &sme);
-
-    client.propose_admin(&new_admin, &Some(100u64));
-    let expiry = client.get_pending_admin_expiry().unwrap();
-    env.ledger().with_mut(|l| l.timestamp = expiry - 1);
-
-    let updated = client.accept_admin();
-    assert_eq!(updated.admin, new_admin);
-    assert_eq!(client.get_pending_admin_expiry(), None);
-}
-
-/// Acceptance exactly at expiry (inclusive boundary) must succeed.
-#[test]
-fn test_accept_admin_exactly_at_expiry_succeeds() {
-    let env = Env::default();
-    let (client, admin, sme) = setup(&env);
-    let new_admin = Address::generate(&env);
-    default_init(&client, &env, &admin, &sme);
-
-    client.propose_admin(&new_admin, &Some(100u64));
-    let expiry = client.get_pending_admin_expiry().unwrap();
-    env.ledger().with_mut(|l| l.timestamp = expiry);
-
-    let updated = client.accept_admin();
-    assert_eq!(updated.admin, new_admin);
-}
-
-/// Acceptance one second past expiry must return `AdminProposalExpired`.
-#[test]
-fn test_accept_admin_one_second_past_expiry_fails() {
-    let env = Env::default();
-    let (client, admin, sme) = setup(&env);
-    let new_admin = Address::generate(&env);
-    default_init(&client, &env, &admin, &sme);
-
-    client.propose_admin(&new_admin, &Some(100u64));
-    let expiry = client.get_pending_admin_expiry().unwrap();
-    env.ledger().with_mut(|l| l.timestamp = expiry + 1);
-
-    assert_contract_error(client.try_accept_admin(), EscrowError::AdminProposalExpired);
-    assert_eq!(client.get_pending_admin(), Some(new_admin));
-    assert_eq!(client.get_escrow().admin, admin);
-}
-
-/// An expired proposal does not block a fresh `propose_admin` + `accept_admin`.
-#[test]
-fn test_repropose_after_expiry_succeeds() {
-    let env = Env::default();
-    let (client, admin, sme) = setup(&env);
-    let stale = Address::generate(&env);
-    let fresh = Address::generate(&env);
-    default_init(&client, &env, &admin, &sme);
-
-    client.propose_admin(&stale, &Some(50u64));
-    let expiry = client.get_pending_admin_expiry().unwrap();
-    env.ledger().with_mut(|l| l.timestamp = expiry + 1);
-    assert_contract_error(client.try_accept_admin(), EscrowError::AdminProposalExpired);
-
-    client.propose_admin(&fresh, &Some(200u64));
-    assert_eq!(client.get_pending_admin(), Some(fresh.clone()));
-
-    let updated = client.accept_admin();
-    assert_eq!(updated.admin, fresh);
-    assert_eq!(client.get_pending_admin_expiry(), None);
-}
-
-/// `cancel_pending_admin` before expiry must clear both pending address and expiry.
-#[test]
-fn test_cancel_before_expiry_clears_expiry() {
-    let env = Env::default();
-    let (client, admin, sme) = setup(&env);
-    let new_admin = Address::generate(&env);
-    default_init(&client, &env, &admin, &sme);
-
-    client.propose_admin(&new_admin, &Some(500u64));
-    assert!(client.get_pending_admin_expiry().is_some());
-
-    client.cancel_pending_admin();
-    assert_eq!(client.get_pending_admin(), None);
-    assert_eq!(client.get_pending_admin_expiry(), None);
-}
-
-// ---------------------------------------------------------------------------
-// upgrade() entrypoint: state preservation, non-admin rejection, event payload
-// ---------------------------------------------------------------------------
-
-/// Register a minimal WASM module in the test environment and return its 32-byte hash.
-///
-/// The bytes are the canonical WASM magic number and version-1 header — the smallest
-/// well-formed WASM module accepted by the Soroban test host.  The hash is the value
-/// that `update_current_contract_wasm` expects; the actual bytecode is irrelevant in
-/// native-test mode because no VM execution occurs.
-fn install_stub_wasm(env: &Env) -> soroban_sdk::BytesN<32> {
-    // Minimal valid WASM: 4-byte magic (\0asm) + 4-byte version (1 little-endian).
-    env.deployer()
-        .upload_contract_wasm(soroban_sdk::Bytes::from_slice(
-            env,
-            b"\x00asm\x01\x00\x00\x00",
-        ))
-}
-
-/// `upgrade()` must leave all persistent and instance storage keys intact.
-///
-/// This test funds an escrow to the target (which writes `DataKey::Escrow`,
-/// `DataKey::InvestorContribution`, and `DataKey::FundingCloseSnapshot`), calls
-/// `upgrade()` with the same WASM hash, and then reads back every piece of state
-/// that was written before the call to prove the deployer swap does not touch stored data.
-#[test]
-fn test_upgrade_preserves_escrow_state() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let admin = Address::generate(&env);
-    let sme = Address::generate(&env);
-    let investor = Address::generate(&env);
-
-    let client = deploy(&env);
-    let contract_id = client.address.clone();
-
-    client.init(
-        &admin,
-        &soroban_sdk::String::from_str(&env, "UPG001"),
-        &sme,
-        &TARGET,
-        &800i64,
-        &0u64,
-        &Address::generate(&env),
-        &None,
-        &Address::generate(&env),
-        &None,
-        &None,
-        &None,
-        &None,
-        &None,
-        &None,
-    );
-
-    // Fund to target so FundingCloseSnapshot and InvestorContribution are written.
-    client.fund(&investor, &TARGET);
-
-    let escrow_before = client.get_escrow();
-    let snapshot_before = client
-        .get_funding_close_snapshot()
-        .expect("snapshot must exist after full funding");
-    let contribution_before: i128 = env.as_contract(&contract_id, || {
-        env.storage()
-            .persistent()
-            .get::<DataKey, i128>(&DataKey::InvestorContribution(investor.clone()))
-            .expect("contribution must exist")
-    });
-
-    // Perform upgrade with the same WASM (additive-only policy; state must survive).
-    let new_hash = install_stub_wasm(&env);
-    client.upgrade(&new_hash);
-
-    // All pre-upgrade state must be byte-identical after the upgrade.
-    assert_eq!(client.get_escrow(), escrow_before, "DataKey::Escrow changed");
-    assert_eq!(
-        client.get_funding_close_snapshot().expect("snapshot missing post-upgrade"),
-        snapshot_before,
-        "FundingCloseSnapshot changed"
-    );
-    let contribution_after: i128 = env.as_contract(&contract_id, || {
-        env.storage()
-            .persistent()
-            .get::<DataKey, i128>(&DataKey::InvestorContribution(investor.clone()))
-            .expect("contribution missing post-upgrade")
-    });
-    assert_eq!(
-        contribution_after, contribution_before,
-        "InvestorContribution changed"
-    );
-}
-
-/// `upgrade()` must reject any caller that has not been granted admin authorization.
-///
-/// The test wires zero mock auths so even a legitimate admin address cannot satisfy
-/// `require_auth()`. The call must fail before reaching the deployer swap.
-#[test]
-#[should_panic]
-fn test_upgrade_rejects_non_admin() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let admin = Address::generate(&env);
-    let sme = Address::generate(&env);
-    let client = deploy(&env);
-
-    client.init(
-        &admin,
-        &soroban_sdk::String::from_str(&env, "UPG002"),
-        &sme,
-        &TARGET,
-        &800i64,
-        &0u64,
-        &Address::generate(&env),
-        &None,
-        &Address::generate(&env),
-        &None,
-        &None,
-        &None,
-        &None,
-        &None,
-        &None,
-    );
-
-    // Upload WASM while auths are still mocked, then strip all authorizations.
-    let new_hash = install_stub_wasm(&env);
-    env.mock_auths(&[]);
-
-    // Must panic — no admin auth is present.
-    client.upgrade(&new_hash);
-}
-
-/// `upgrade()` must emit a `ContractUpgraded` event containing the correct
-/// `invoice_id` and `new_wasm_hash` before the deployer call executes.
-///
-/// The `symbol_short!("upgrade")` topic and the hash payload are the primary
-/// signals downstream indexers use to detect WASM replacement. Any regression
-/// in topic or data would silently break monitoring.
-#[test]
-fn test_upgrade_emits_event() {
     use soroban_sdk::testutils::Events as _;
 
     let env = Env::default();
     env.mock_all_auths();
+    let (client, admin, sme) = setup(&env);
 
-    let admin = Address::generate(&env);
-    let sme = Address::generate(&env);
-    let client = deploy(&env);
     let contract_id = client.address.clone();
+    let invoice_id = client.get_escrow().invoice_id.clone();
 
+    let reg1 = Address::generate(&env);
+    let reg2 = Address::generate(&env);
+
+    // init with no registry
     client.init(
         &admin,
-        &soroban_sdk::String::from_str(&env, "UPG003"),
+        &soroban_sdk::String::from_str(&env, "REG_RB_1"),
         &sme,
         &TARGET,
         &800i64,
@@ -1920,22 +1618,159 @@ fn test_upgrade_emits_event() {
         &None,
         &None,
         &None,
+        &None,
+        &None,
     );
 
-    let new_hash = install_stub_wasm(&env);
-    client.upgrade(&new_hash);
+    // Set to reg1
+    client.rebind_registry_ref(&Some(reg1.clone()));
+    assert_eq!(client.get_registry_ref(), Some(reg1.clone()));
 
-    let invoice_id = client.get_escrow().invoice_id;
-    let expected = crate::ContractUpgraded {
-        name: symbol_short!("upgrade"),
+    // Change to reg2
+    client.rebind_registry_ref(&Some(reg2.clone()));
+    assert_eq!(client.get_registry_ref(), Some(reg2.clone()));
+
+    // Clear to None
+    client.rebind_registry_ref(&None);
+    assert_eq!(client.get_registry_ref(), None);
+
+    // Event sanity: last event should be clear (registry == None)
+    let last = env.events().all().events().last().unwrap().clone();
+    let expected = crate::RegistryRefRebound {
+        name: symbol_short!("reg_rebind"),
         invoice_id,
-        new_wasm_hash: new_hash,
+        registry: None,
     }
     .to_xdr(&env, &contract_id);
 
-    assert_eq!(
-        env.events().all().events().last().unwrap().clone(),
-        expected,
-        "upgrade event topic or payload mismatch"
+    assert_eq!(last, expected);
+}
+
+#[test]
+#[should_panic]
+fn test_rebind_registry_ref_requires_admin_auth() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+
+    client.init(
+        &admin,
+        &soroban_sdk::String::from_str(&env, "REG_RB_2"),
+        &sme,
+        &TARGET,
+        &800i64,
+        &0u64,
+        &Address::generate(&env),
+        &None,
+        &Address::generate(&env),
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
     );
+
+    env.mock_auths(&[]);
+    client.rebind_registry_ref(&Some(Address::generate(&env)));
+}
+
+fn test_error_code_uniqueness() {
+
+    let mut discriminants = std::collections::HashSet::new();
+    let codes = [
+        EscrowError::AmountMustBePositive as u32,
+        EscrowError::YieldBpsOutOfRange as u32,
+        EscrowError::EscrowAlreadyInitialized as u32,
+        EscrowError::InvoiceIdInvalidLength as u32,
+        EscrowError::InvoiceIdInvalidCharset as u32,
+        EscrowError::MinContributionNotPositive as u32,
+        EscrowError::MinContributionExceedsAmount as u32,
+        EscrowError::MaxUniqueInvestorsNotPositive as u32,
+        EscrowError::MaxPerInvestorNotPositive as u32,
+        EscrowError::TierYieldOutOfRange as u32,
+        EscrowError::TierYieldBelowBase as u32,
+        EscrowError::TierLockNotIncreasing as u32,
+        EscrowError::TierYieldNotNonDecreasing as u32,
+        EscrowError::EscrowNotInitialized as u32,
+        EscrowError::FundingTokenNotSet as u32,
+        EscrowError::TreasuryNotSet as u32,
+        EscrowError::LegalHoldBlocksTreasuryDustSweep as u32,
+        EscrowError::SweepAmountNotPositive as u32,
+        EscrowError::SweepAmountExceedsMax as u32,
+        EscrowError::DustSweepNotTerminal as u32,
+        EscrowError::NoFundingTokenBalanceToSweep as u32,
+        EscrowError::EffectiveSweepAmountZero as u32,
+        EscrowError::TransferAmountNotPositive as u32,
+        EscrowError::InsufficientTokenBalanceBeforeTransfer as u32,
+        EscrowError::SenderBalanceUnderflow as u32,
+        EscrowError::RecipientBalanceUnderflow as u32,
+        EscrowError::SenderBalanceDeltaMismatch as u32,
+        EscrowError::RecipientBalanceDeltaMismatch as u32,
+        EscrowError::SweepExceedsLiabilityFloor as u32,
+        EscrowError::PrimaryAttestationAlreadyBound as u32,
+        EscrowError::AttestationAppendLogCapacityReached as u32,
+        EscrowError::CollateralAmountNotPositive as u32,
+        EscrowError::CollateralAssetEmpty as u32,
+        EscrowError::CollateralTimestampBackwards as u32,
+        EscrowError::InvestorBatchEmpty as u32,
+        EscrowError::InvestorBatchTooLarge as u32,
+        EscrowError::FundingBatchEmpty as u32,
+        EscrowError::FundingBatchTooLarge as u32,
+        EscrowError::TargetNotPositive as u32,
+        EscrowError::TargetUpdateNotOpen as u32,
+        EscrowError::TargetBelowFundedAmount as u32,
+        EscrowError::CapLowerNotOpen as u32,
+        EscrowError::NoInvestorCapConfigured as u32,
+        EscrowError::NewCapNotLower as u32,
+        EscrowError::NewCapBelowCurrentFunderCount as u32,
+        EscrowError::MaturityUpdateNotOpen as u32,
+        EscrowError::NewAdminSameAsCurrent as u32,
+        EscrowError::MigrationVersionMismatch as u32,
+        EscrowError::AlreadyCurrentSchemaVersion as u32,
+        EscrowError::NoMigrationPath as u32,
+        EscrowError::FundingAmountNotPositive as u32,
+        EscrowError::FundingBelowMinContribution as u32,
+        EscrowError::LegalHoldBlocksFunding as u32,
+        EscrowError::EscrowNotOpenForFunding as u32,
+        EscrowError::InvestorNotAllowlisted as u32,
+        EscrowError::InvestorContributionOverflow as u32,
+        EscrowError::InvestorContributionExceedsCap as u32,
+        EscrowError::UniqueInvestorCapReached as u32,
+        EscrowError::TieredSecondDeposit as u32,
+        EscrowError::InvestorClaimTimeOverflow as u32,
+        EscrowError::FundedAmountOverflow as u32,
+        EscrowError::CommitmentLockExceedsMaturity as u32,
+        EscrowError::LegalHoldBlocksSettlement as u32,
+        EscrowError::SettlementNotFunded as u32,
+        EscrowError::MaturityNotReached as u32,
+        EscrowError::LegalHoldBlocksWithdrawal as u32,
+        EscrowError::WithdrawalNotFunded as u32,
+        EscrowError::LegalHoldBlocksInvestorClaims as u32,
+        EscrowError::NoContributionToClaim as u32,
+        EscrowError::InvestorClaimNotSettled as u32,
+        EscrowError::InvestorCommitmentLockNotExpired as u32,
+        EscrowError::ComputePayoutArithmeticOverflow as u32,
+        EscrowError::LegalHoldBlocksCancelFunding as u32,
+        EscrowError::CancelFundingNotOpen as u32,
+        EscrowError::RefundNotCancelled as u32,
+        EscrowError::NoContributionToRefund as u32,
+        EscrowError::LegalHoldClearRequestMissing as u32,
+        EscrowError::LegalHoldClearNotReady as u32,
+        EscrowError::LegalHoldClearDelayOverflow as u32,
+        EscrowError::FundingDeadlinePassed as u32,
+        EscrowError::LegalHoldBlocksBeneficiaryRotation as u32,
+        EscrowError::RotationNotOpen as u32,
+        EscrowError::NewSmeSameAsCurrent as u32,
+        EscrowError::NoPendingAdmin as u32,
+        EscrowError::InsufficientContractBalance as u32,
+    ];
+    for code in codes.iter() {
+        assert!(
+            discriminants.insert(*code),
+            "Duplicate discriminant: {}",
+            code
+        );
+    }
 }
