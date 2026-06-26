@@ -2392,8 +2392,32 @@ impl LiquifactEscrow {
         .publish(&env);
     }
 
-    /// Enable or disable the investor allowlist. When enabled, only addresses with
-    /// [`DataKey::InvestorAllowlisted`] set to true may fund the escrow.
+    /// Enable or disable the investor allowlist gate.
+    ///
+    /// When enabled (active = true), only addresses with [`DataKey::InvestorAllowlisted`] set to
+    /// `true` may call [`LiquifactEscrow::fund`] or [`LiquifactEscrow::fund_with_commitment`].
+    /// When disabled (active = false), the gate is bypassed and any address may fund.
+    ///
+    /// The toggle state is stored in **instance** storage ([`DataKey::AllowlistActive`]) and
+    /// defaults to `false` (disabled) when absent. Per-address allowlist entries in
+    /// [`DataKey::InvestorAllowlisted`] live in **persistent** storage and persist independently
+    /// of the toggle state—disabling the gate does not delete entries.
+    ///
+    /// # Authorization
+    /// Requires admin authorization via [`Address::require_auth()`].
+    ///
+    /// # Events
+    /// Emits [`AllowlistEnabledChanged`] with the new state.
+    ///
+    /// # Storage
+    /// - Writes to instance storage: [`DataKey::AllowlistActive`]
+    /// - Bumps instance storage TTL via [`Env::storage().instance().extend_ttl()`]
+    ///
+    /// # See also
+    /// - [`LiquifactEscrow::is_allowlist_active`] — read the current toggle state
+    /// - [`LiquifactEscrow::set_investor_allowlisted`] — set per-address allowlist entry
+    /// - [`LiquifactEscrow::set_investors_allowlisted`] — batch set per-address entries
+    /// - [`docs/escrow-allowlist.md`](../docs/escrow-allowlist.md) — full allowlist model documentation
     pub fn set_allowlist_active(env: Env, active: bool) {
         let escrow = Self::load_escrow_require_admin(&env);
         env.storage()
@@ -2407,9 +2431,20 @@ impl LiquifactEscrow {
         .publish(&env);
     }
 
-    /// Returns `true` when the investor allowlist gate is enabled.
-    /// When active, only addresses with [`is_investor_allowlisted`] set to true may fund the escrow.
-    /// Defaults to `false` when the key is absent.
+    /// Read whether the investor allowlist gate is currently active.
+    ///
+    /// Returns `true` when [`DataKey::AllowlistActive`] is set to `true`, `false` otherwise.
+    /// The key lives in instance storage and defaults to `false` when absent.
+    ///
+    /// This is a read-only function and does not require authorization.
+    ///
+    /// # Returns
+    /// - `true` if the allowlist gate is active (only allowlisted addresses may fund)
+    /// - `false` if the allowlist gate is inactive (any address may fund)
+    ///
+    /// # See also
+    /// - [`LiquifactEscrow::set_allowlist_active`] — toggle the gate state
+    /// - [`LiquifactEscrow::is_investor_allowlisted`] — check if a specific address is allowlisted
     pub fn is_allowlist_active(env: Env) -> bool {
         env.storage()
             .instance()
@@ -2417,7 +2452,35 @@ impl LiquifactEscrow {
             .unwrap_or(false)
     }
 
-    /// Add or remove an investor from the allowlist.
+    /// Set whether a specific investor address is allowlisted.
+    ///
+    /// Writes a boolean entry to **persistent** storage under [`DataKey::InvestorAllowlisted`].
+    /// The entry has an independent TTL per address and persists even when the allowlist gate
+    /// is disabled via [`LiquifactEscrow::set_allowlist_active`].
+    ///
+    /// When the allowlist gate is active, [`LiquifactEscrow::fund`] and
+    /// [`LiquifactEscrow::fund_with_commitment`] check this entry and reject funding with
+    /// [`EscrowError::InvestorNotAllowlisted`] if the entry is absent or `false`.
+    ///
+    /// # Authorization
+    /// Requires admin authorization via [`Address::require_auth()`].
+    ///
+    /// # Events
+    /// Emits [`InvestorAllowlistChanged`] for the address.
+    ///
+    /// # Storage
+    /// - Writes to persistent storage: [`DataKey::InvestorAllowlisted(investor)`]
+    /// - Bumps persistent storage TTL via [`Env::storage().persistent().extend_ttl()`]
+    ///   with [`PERSISTENT_TTL_MIN_EXTENSION_LEDGERS`] (≈1 hour at 1 ledger/sec)
+    ///
+    /// # Arguments
+    /// - `investor` — The address to allowlist or remove
+    /// - `allowed` — `true` to allowlist, `false` to remove from allowlist
+    ///
+    /// # See also
+    /// - [`LiquifactEscrow::is_investor_allowlisted`] — check if an address is allowlisted
+    /// - [`LiquifactEscrow::set_investors_allowlisted`] — batch variant for multiple addresses
+    /// - [`docs/escrow-allowlist.md`](../docs/escrow-allowlist.md) — full allowlist model documentation
     pub fn set_investor_allowlisted(env: Env, investor: Address, allowed: bool) {
         let escrow = Self::load_escrow_require_admin(&env);
         env.storage()
@@ -2436,15 +2499,36 @@ impl LiquifactEscrow {
     /// Batch add or remove investors from the allowlist.
     ///
     /// Accepts a `Vec<Address>` and a single `allowed` flag. Requires admin authorization
-    /// once. The call is rejected for empty vectors or vectors longer than
-    /// `MAX_INVESTOR_ALLOWLIST_BATCH` to keep storage and CPU bounded.
+    /// once for the entire batch. The call is rejected for empty vectors or vectors longer than
+    /// [`MAX_INVESTOR_ALLOWLIST_BATCH`] (32) to keep storage and CPU bounded.
     ///
-    /// Invariant: the end state and emitted events are identical to calling
-    /// `set_investor_allowlisted` individually for each element in `investors`.
+    /// **Invariant:** the end state and emitted events are identical to calling
+    /// [`LiquifactEscrow::set_investor_allowlisted`] individually for each element in `investors`.
+    /// Each address receives its own persistent storage write, TTL bump, and event emission.
+    ///
+    /// # Authorization
+    /// Requires admin authorization via [`Address::require_auth()`] once for the entire batch.
+    ///
+    /// # Events
+    /// Emits one [`InvestorAllowlistChanged`] event per address in the batch.
+    ///
+    /// # Storage
+    /// - Writes to persistent storage: [`DataKey::InvestorAllowlisted(investor)`] for each address
+    /// - Bumps persistent storage TTL via [`Env::storage().persistent().extend_ttl()`]
+    ///   with [`PERSISTENT_TTL_MIN_EXTENSION_LEDGERS`] (≈1 hour at 1 ledger/sec) for each entry
+    ///
+    /// # Arguments
+    /// - `investors` — Vector of addresses to allowlist or remove (must be non-empty and ≤32 entries)
+    /// - `allowed` — `true` to allowlist all addresses, `false` to remove all from allowlist
     ///
     /// # Errors
-    /// Emits typed [`EscrowError`] codes when the escrow is uninitialized, the batch is empty, or
-    /// the batch exceeds [`MAX_INVESTOR_ALLOWLIST_BATCH`].
+    /// - [`EscrowError::InvestorBatchEmpty`] (70) — when `investors` is empty
+    /// - [`EscrowError::InvestorBatchTooLarge`] (71) — when `investors.len() > MAX_INVESTOR_ALLOWLIST_BATCH`
+    ///
+    /// # See also
+    /// - [`LiquifactEscrow::set_investor_allowlisted`] — single-address variant
+    /// - [`LiquifactEscrow::is_investor_allowlisted`] — check if an address is allowlisted
+    /// - [`docs/escrow-allowlist.md`](../docs/escrow-allowlist.md) — full allowlist model documentation
     pub fn set_investors_allowlisted(env: Env, investors: Vec<Address>, allowed: bool) {
         let escrow = Self::load_escrow_require_admin(&env);
 
@@ -2473,9 +2557,25 @@ impl LiquifactEscrow {
         }
     }
 
-    /// Returns `true` when `investor` is permitted to fund when the allowlist gate is active.
-    /// Stored in persistent storage (independent TTL per address).
-    /// Defaults to `false` when the key is absent.
+    /// Check whether a specific investor address is allowlisted.
+    ///
+    /// Reads from **persistent** storage under [`DataKey::InvestorAllowlisted`]. Returns `false`
+    /// when the entry is absent or explicitly set to `false`. This default-to-deny behavior
+    /// ensures that archived/evicted entries or addresses never added to the allowlist are
+    /// treated as not allowlisted when the gate is active.
+    ///
+    /// This is a read-only function and does not require authorization.
+    ///
+    /// # Arguments
+    /// - `investor` — The address to check
+    ///
+    /// # Returns
+    /// - `true` if the address has an allowlist entry set to `true`
+    /// - `false` if the entry is absent, `false`, or has been archived
+    ///
+    /// # See also
+    /// - [`LiquifactEscrow::set_investor_allowlisted`] — set per-address allowlist entry
+    /// - [`LiquifactEscrow::set_allowlist_active`] — toggle the gate state
     pub fn is_investor_allowlisted(env: Env, investor: Address) -> bool {
         env.storage()
             .persistent()
