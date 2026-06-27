@@ -1008,7 +1008,7 @@ pub struct AttestationDigestRevoked {
     pub index: u32,
 }
 
-/// Digest entry with revocation status returned by `get_attestation_digest_at`
+/// Digest entry with revocation status returned by `get_attestation_digest_at`.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AttestationDigestInfo {
@@ -1016,32 +1016,6 @@ pub struct AttestationDigestInfo {
     pub digest: BytesN<32>,
     /// `true` if the entry has been revoked via `revoke_attestation_digest`.
     pub revoked: bool,
-}
-#[contractevent]
-pub struct AttestationDigestUnrevoked {
-    #[topic]
-    pub name: Symbol,
-    pub invoice_id: Symbol,
-    pub index: u32,
-}
-
-#[contractevent]
-pub struct ContractUpgraded {
-    #[topic]
-    pub name: Symbol,
-    #[topic]
-    pub invoice_id: Symbol,
-    pub new_wasm_hash: BytesN<32>,
-}
-
-#[contractevent]
-pub struct MaturityMaxHorizonUpdated {
-    #[topic]
-    pub name: Symbol,
-    #[topic]
-    pub invoice_id: Symbol,
-    pub old_horizon: u64,
-    pub new_horizon: u64,
 }
 
 #[contractevent]
@@ -1471,14 +1445,6 @@ impl LiquifactEscrow {
         .publish(&env);
     }
 
-    /// Admin-only: clear the off-chain registry hint.
-    ///
-    /// Convenience wrapper around `rebind_registry_ref` with `None`.
-    /// Emits the same `RegistryRefRebound` event with `registry = None`.
-    pub fn clear_registry_ref(env: Env) {
-        Self::rebind_registry_ref(env, None);
-    }
-
     /// Returns the optional pending admin address waiting for [`LiquifactEscrow::accept_admin`],
     /// or [`None`] when no admin handover is in progress.
     pub fn get_pending_admin(env: Env) -> Option<Address> {
@@ -1900,6 +1866,22 @@ impl LiquifactEscrow {
             .instance()
             .get(&DataKey::AttestationAppendLog)
             .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    /// Returns the digest and revocation flag at `index`.
+    /// Returns `None` when `index >= log.len()`.
+    pub fn get_attestation_digest_at(env: Env, index: u32) -> Option<AttestationDigestInfo> {
+        let log = Self::get_attestation_append_log(env.clone());
+        if (index as usize) >= log.len() {
+            return None;
+        }
+        let digest = log.get(index as usize).unwrap();
+        let revoked = env
+            .storage()
+            .instance()
+            .get(&DataKey::AttestationRevoked(index))
+            .unwrap_or(false);
+        Some(AttestationDigestInfo { digest, revoked })
     }
 
     // --- Persistent per-investor storage helpers ---
