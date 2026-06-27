@@ -193,6 +193,84 @@ fn test_transfer_admin_same_address_panics() {
 }
 
 #[test]
+fn test_rotate_beneficiary_success() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    let new_sme = Address::generate(&env);
+    let invoice_id = soroban_sdk::String::from_str(&env, "ROT001");
+    client.init(
+        &admin,
+        &invoice_id,
+        &sme,
+        &TARGET,
+        &800i64,
+        &1000u64,
+        &Address::generate(&env),
+        &None,
+        &Address::generate(&env),
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
+
+    client.rotate_beneficiary(&new_sme);
+    let updated = client.get_escrow();
+    assert_eq!(updated.sme_address, new_sme);
+}
+
+#[test]
+#[should_panic(expected = "HostError: Error(Contract, #81)")]
+fn test_rotate_beneficiary_same_address_panics() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    client.init(
+        &admin,
+        &soroban_sdk::String::from_str(&env, "ROT002"),
+        &sme,
+        &TARGET,
+        &800i64,
+        &1000u64,
+        &Address::generate(&env),
+        &None,
+        &Address::generate(&env),
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
+    client.rotate_beneficiary(&sme);
+}
+
+#[test]
+#[should_panic(expected = "HostError: Error(Contract, #82)")]
+fn test_rotate_beneficiary_wrong_state() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    client.init(
+        &admin,
+        &soroban_sdk::String::from_str(&env, "ROT003"),
+        &sme,
+        &TARGET,
+        &800i64,
+        &1000u64,
+        &Address::generate(&env),
+        &None,
+        &Address::generate(&env),
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
+    // Cancel the escrow so it's in a terminal state
+    client.cancel_funding();
+    client.rotate_beneficiary(&Address::generate(&env));
+}
+
+#[test]
 #[should_panic]
 fn test_transfer_admin_uninitialized_panics() {
     let env = Env::default();
