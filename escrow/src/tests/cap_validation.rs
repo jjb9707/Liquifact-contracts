@@ -1,6 +1,6 @@
 //! Standalone test for MaxUniqueInvestorsCap and UniqueFunderCount functionality
 //! This test file validates the core functionality without dependencies on other test modules
-
+use crate::MaxUniqueInvestorsCapLowered;
 use super::*;
 use soroban_sdk::{Address, Env, String};
 

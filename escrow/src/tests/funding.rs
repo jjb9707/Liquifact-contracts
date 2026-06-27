@@ -1,3 +1,4 @@
+use crate::EscrowError;
 use super::*;
 use soroban_sdk::{Error, InvokeError};
 use std::fmt::Debug;
@@ -330,7 +331,7 @@ fn test_per_investor_contribution_uses_persistent_storage() {
         &None,
         &None,
         &None,
-    );
+     &None);
     client.fund(&investor, &500i128);
 
     env.as_contract(&contract_id, || {
@@ -955,7 +956,7 @@ fn test_yield_tier_emitted_in_event() {
         &Some(tiers),
         &None,
         &None,
-    );
+     &None, &None);
 
     let inv = Address::generate(&env);
 
@@ -1027,7 +1028,7 @@ fn test_yield_tier_emitted_no_tiers() {
         &None,
         &None,
         &None,
-    );
+     &None, &None);
 
     let inv = Address::generate(&env);
     // fund_with_commitment even with no tiers configured
@@ -1084,7 +1085,7 @@ fn test_yield_tier_emitted_between_tiers() {
         &Some(tiers),
         &None,
         &None,
-    );
+     &None, &None);
 
     let inv = Address::generate(&env);
     // Committing 150 secs (between 100 and 200) -> matches the 100 sec tier.

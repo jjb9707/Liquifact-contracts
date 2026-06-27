@@ -46,7 +46,7 @@ fn typed_error_codes_cover_init_and_state_guards() {
             &None,
             &None,
             &None,
-        ),
+         &None),
         EscrowError::AmountMustBePositive,
     );
 
@@ -632,7 +632,7 @@ fn test_bump_ttl_covers_persistent_investor_keys() {
         &None,
         &None,
         &None,
-    );
+     &None);
     client.set_investor_allowlisted(&investor, &true);
     client.fund(&investor, &100);
     client.settle();
