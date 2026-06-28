@@ -1031,6 +1031,23 @@ pub struct AttestationDigestRevoked {
     pub index: u32,
 }
 
+#[contractevent]
+pub struct AttestationDigestUnrevoked {
+    #[topic]
+    pub name: Symbol,
+    pub invoice_id: Symbol,
+    pub index: u32,
+}
+
+#[contractevent]
+pub struct MaturityMaxHorizonUpdated {
+    #[topic]
+    pub name: Symbol,
+    pub invoice_id: Symbol,
+    pub old_horizon: u64,
+    pub new_horizon: u64,
+}
+
 /// Digest entry with revocation status returned by `get_attestation_digest_at`.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
