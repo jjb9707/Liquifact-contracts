@@ -327,6 +327,8 @@ pub enum EscrowError {
     NoInvestorCapConfigured = 76,
     /// [`LiquifactEscrow::lower_max_unique_investors`] did not strictly lower the cap.
     NewCapNotLower = 77,
+    /// [`LiquifactEscrow::raise_max_unique_investors`] did not strictly raise the cap.
+    NewCapNotHigher = 176,
     /// [`LiquifactEscrow::lower_max_unique_investors`] set cap below current unique funder count.
     NewCapBelowCurrentFunderCount = 78,
     /// [`LiquifactEscrow::update_maturity`] called while escrow is not open.
@@ -751,6 +753,16 @@ pub struct EscrowInitialized {
 
 #[contractevent]
 pub struct MaxUniqueInvestorsCapLowered {
+    #[topic]
+    pub name: Symbol,
+    #[topic]
+    pub invoice_id: Symbol,
+    pub old_cap: u32,
+    pub new_cap: u32,
+}
+
+#[contractevent]
+pub struct MaxUniqueInvestorsCapRaised {
     #[topic]
     pub name: Symbol,
     #[topic]
@@ -2878,6 +2890,54 @@ impl LiquifactEscrow {
 
         MaxUniqueInvestorsCapLowered {
             name: symbol_short!("inv_cap"),
+            invoice_id: escrow.invoice_id.clone(),
+            old_cap,
+            new_cap,
+        }
+        .publish(&env);
+
+        new_cap
+    }
+
+    /// Raise the maximum unique investor cap while the escrow is still open.
+    ///
+    /// This is an admin-only counterpart to `lower_max_unique_investors`.
+    /// The new cap must be strictly higher than the current cap.
+    ///
+    /// # Panics
+    /// - If the escrow is not open.
+    /// - If no unique-investor cap was configured at initialization.
+    /// - If `new_cap` is not strictly higher than the current cap.
+    pub fn raise_max_unique_investors(env: Env, new_cap: u32) -> u32 {
+        let escrow = Self::load_escrow_require_admin(&env);
+
+        // We can reuse the existing EscrowNotOpenForFunding or similar open check.
+        // Or if there's a specific one, we use it. For now EscrowNotOpenForFunding is safe,
+        // or just rely on escrow.status == 0 since that's what the prompt implies.
+        // Actually, reusing EscrowError::EscrowNotOpenForFunding since CapLowerNotOpen is specific to lower.
+        // But wait, the issue said "parallel guards" and "open-state-only".
+        // Let's use EscrowError::EscrowNotOpenForFunding.
+        ensure(&env, escrow.status == 0, EscrowError::EscrowNotOpenForFunding);
+
+        let old_cap: Option<u32> = env
+            .storage()
+            .instance()
+            .get(&DataKey::MaxUniqueInvestorsCap);
+        ensure(
+            &env,
+            old_cap.is_some(),
+            EscrowError::NoInvestorCapConfigured,
+        );
+        let old_cap = old_cap.unwrap();
+
+        ensure(&env, new_cap > old_cap, EscrowError::NewCapNotHigher);
+
+        env.storage()
+            .instance()
+            .set(&DataKey::MaxUniqueInvestorsCap, &new_cap);
+
+        MaxUniqueInvestorsCapRaised {
+            name: symbol_short!("raise_cap"),
             invoice_id: escrow.invoice_id.clone(),
             old_cap,
             new_cap,
