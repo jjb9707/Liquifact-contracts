@@ -2350,12 +2350,8 @@ impl LiquifactEscrow {
         Self::get_persistent_investor_claimed(&env, investor)
     }
 
-    /// Returns `true` when [`LiquifactEscrow::settle`] would succeed for the current ledger state.
-    ///
-    /// Specifically: escrow status must be `1` (funded), no legal hold must be active,
-    /// and the configured maturity (if non-zero) must have been reached.
-    pub fn is_settleable(env: Env) -> bool {
-        if Self::legal_hold_active(&env) {
+    fn settleable_now(env: &Env) -> bool {
+        if Self::legal_hold_active(env) {
             return false;
         }
         let escrow = Self::get_escrow(env.clone());
@@ -2366,6 +2362,16 @@ impl LiquifactEscrow {
             return false;
         }
         true
+    }
+
+    /// Returns `true` when [`LiquifactEscrow::settle`] would succeed for the current ledger state.
+    ///
+    /// Settlement requires:
+    /// - escrow funded
+    /// - maturity reached
+    /// - no active legal hold
+    pub fn is_settleable(env: Env) -> bool {
+        Self::settleable_now(&env)
     }
 
     /// Record or replace the optional SME collateral commitment metadata.
