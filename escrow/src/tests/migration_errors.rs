@@ -109,8 +109,5 @@ fn test_no_migration_path() {
         env.storage().instance().set(&DataKey::Version, &1u32);
     });
 
-    assert_contract_error(
-        client.try_migrate(&1u32),
-        EscrowError::NoMigrationPath,
-    );
+    assert_contract_error(client.try_migrate(&1u32), EscrowError::NoMigrationPath);
 }

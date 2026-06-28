@@ -1162,7 +1162,7 @@ impl LiquifactEscrow {
             .get(&DataKey::Treasury)
             .unwrap_or_else(|| fail(env, EscrowError::TreasuryNotSet))
     }
-/// Validates the optional yield-tier table supplied at `init`.
+    /// Validates the optional yield-tier table supplied at `init`.
     ///
     /// # Rules
     ///
@@ -1227,7 +1227,7 @@ impl LiquifactEscrow {
         }
     }
 
-   /// Returns `(effective_yield_bps, matched_lock_secs)` for a given commitment.
+    /// Returns `(effective_yield_bps, matched_lock_secs)` for a given commitment.
     ///
     /// Scans [`DataKey::YieldTierTable`] and picks the tier with the highest `yield_bps`
     /// where `committed_lock_secs >= tier.min_lock_secs`. Returns base yield when:
@@ -1241,8 +1241,6 @@ impl LiquifactEscrow {
     ///
     /// `matched_lock_secs` is the `min_lock_secs` of the matched tier, or `0` for base yield.
     fn effective_yield_for_commitment(
-    
-    
         env: &Env,
         base_yield: i64,
         committed_lock_secs: u64,
@@ -1613,10 +1611,11 @@ impl LiquifactEscrow {
 
         // env.clone(): env is used again after this call for treasury/token reads and publish.
         let escrow = Self::get_escrow(env.clone());
-        ensure(
+        guard_status_in(
             &env,
-            escrow.status == 2 || escrow.status == 3 || escrow.status == 4,
-            EscrowError::DustSweepNotTerminal,
+            escrow.status,
+            &[2, 3, 4],
+            EscrowError::SweepNotTerminal,
         );
 
         let treasury = Self::treasury_or_fail(&env);
@@ -1840,8 +1839,6 @@ impl LiquifactEscrow {
             .get(&DataKey::UniqueFunderCount)
             .unwrap_or(0)
     }
-
-
 
     /// Bundles multiple read-only values to return a comprehensive summary of the escrow state
     /// in a single host invocation.
@@ -2194,7 +2191,11 @@ impl LiquifactEscrow {
             .instance()
             .get(&DataKey::AttestationAppendLog)
             .unwrap_or_else(|| Vec::new(&env));
-        ensure(&env, index < log.len(), EscrowError::AttestationIndexOutOfRange);
+        ensure(
+            &env,
+            index < log.len(),
+            EscrowError::AttestationIndexOutOfRange,
+        );
         ensure(
             &env,
             !env.storage()
@@ -2755,9 +2756,7 @@ impl LiquifactEscrow {
 
         ensure(
             &env,
-            env.storage()
-                .instance()
-                .has(&DataKey::LegalHoldClearableAt),
+            env.storage().instance().has(&DataKey::LegalHoldClearableAt),
             EscrowError::LegalHoldClearRequestMissing,
         );
         let clearable_at: u64 = env
@@ -2800,9 +2799,7 @@ impl LiquifactEscrow {
 
         ensure(
             &env,
-            !env.storage()
-                .instance()
-                .has(&DataKey::LegalHoldClearableAt),
+            !env.storage().instance().has(&DataKey::LegalHoldClearableAt),
             EscrowError::LegalHoldClearRequestMissing,
         );
 
@@ -2832,9 +2829,7 @@ impl LiquifactEscrow {
 
         ensure(
             &env,
-            env.storage()
-                .instance()
-                .has(&DataKey::LegalHoldClearableAt),
+            env.storage().instance().has(&DataKey::LegalHoldClearableAt),
             EscrowError::LegalHoldClearRequestMissing,
         );
 
@@ -2858,7 +2853,7 @@ impl LiquifactEscrow {
         let mut escrow = Self::load_escrow_require_admin(&env);
 
         ensure(&env, new_target > 0, EscrowError::TargetNotPositive);
-        ensure(&env, escrow.status == 0, EscrowError::TargetUpdateNotOpen);
+        guard_status_eq(&env, escrow.status, 0, EscrowError::TargetUpdateNotOpen);
         ensure(
             &env,
             new_target >= escrow.funded_amount,
@@ -3267,11 +3262,7 @@ impl LiquifactEscrow {
             !Self::legal_hold_active(&env),
             EscrowError::LegalHoldBlocksFunding,
         );
-        ensure(
-            &env,
-            escrow.status == 0,
-            EscrowError::EscrowNotOpenForFunding,
-        );
+        guard_status_eq(&env, escrow.status, 0, EscrowError::EscrowNotOpenForFunding);
 
         // Check funding deadline
         if let Some(deadline) = env.storage().instance().get(&DataKey::FundingDeadline) {
@@ -3569,7 +3560,7 @@ impl LiquifactEscrow {
 
         let mut escrow = Self::load_escrow_require_sme(&env);
 
-        ensure(&env, escrow.status == 1, EscrowError::WithdrawalNotFunded);
+        guard_status_eq(&env, escrow.status, 1, EscrowError::WithdrawalNotFunded);
 
         let amount = escrow.funded_amount;
         let sme = escrow.sme_address.clone();
@@ -3642,7 +3633,7 @@ impl LiquifactEscrow {
     /// 6. Idempotent early-return on `InvestorClaimed`.
     /// 7. Storage write + event emit.
     ///
-   /// # Claim-lock enforcement
+    /// # Claim-lock enforcement
     /// `InvestorClaimNotBefore = deposit_timestamp + committed_lock_secs`.
     /// Enforces `now >= not_before` (inclusive boundary):
     /// - deposit at t=1000, lock=500 -> not_before=1500
@@ -3668,11 +3659,7 @@ impl LiquifactEscrow {
 
         // env.clone(): env is used again after this call for storage reads, ledger timestamp, and publish.
         let escrow = Self::get_escrow(env.clone());
-        ensure(
-            &env,
-            escrow.status == 2,
-            EscrowError::InvestorClaimNotSettled,
-        );
+        guard_status_eq(&env, escrow.status, 2, EscrowError::InvestorClaimNotSettled);
 
         let not_before: u64 =
             Self::get_persistent_investor_claim_not_before(&env, investor.clone());
@@ -3832,7 +3819,7 @@ impl LiquifactEscrow {
     pub fn update_maturity(env: Env, new_maturity: u64) -> InvoiceEscrow {
         let mut escrow = Self::load_escrow_require_admin(&env);
 
-        ensure(&env, escrow.status == 0, EscrowError::MaturityUpdateNotOpen);
+        guard_status_eq(&env, escrow.status, 0, EscrowError::MaturityUpdateNotOpen);
 
         let old_maturity = escrow.maturity;
         escrow.maturity = new_maturity;
@@ -3951,9 +3938,10 @@ impl LiquifactEscrow {
     pub fn rotate_beneficiary(env: Env, new_sme: Address) {
         let mut escrow = Self::get_escrow(env.clone());
 
-        ensure(
+        guard_status_in(
             &env,
-            escrow.status == 0 || escrow.status == 1,
+            escrow.status,
+            &[0, 1],
             EscrowError::RotateBeneficiaryNotOpen,
         );
 
@@ -4174,7 +4162,7 @@ impl LiquifactEscrow {
 
         let mut escrow = Self::load_escrow_require_admin(&env);
 
-        ensure(&env, escrow.status == 0, EscrowError::CancelFundingNotOpen);
+        guard_status_eq(&env, escrow.status, 0, EscrowError::CancelFundingNotOpen);
 
         escrow.status = 4;
         env.storage().instance().set(&DataKey::Escrow, &escrow);
@@ -4205,7 +4193,7 @@ impl LiquifactEscrow {
         investor.require_auth();
 
         let escrow = Self::get_escrow(env.clone());
-        ensure(&env, escrow.status == 4, EscrowError::RefundNotCancelled);
+        guard_status_eq(&env, escrow.status, 4, EscrowError::RefundNotCancelled);
 
         let amount: i128 = Self::get_persistent_investor_contribution(&env, investor.clone());
         ensure(&env, amount > 0, EscrowError::NoContributionToRefund);

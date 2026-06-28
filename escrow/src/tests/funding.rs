@@ -1,4 +1,5 @@
 use super::*;
+use crate::EscrowError;
 use soroban_sdk::{Error, InvokeError};
 use std::fmt::Debug;
 
@@ -4454,7 +4455,11 @@ fn test_get_yield_tiers_returns_empty_when_no_tiers_configured() {
     );
 
     let tiers = client.get_yield_tiers();
-    assert_eq!(tiers.len(), 0, "expected empty vec when no tiers configured");
+    assert_eq!(
+        tiers.len(),
+        0,
+        "expected empty vec when no tiers configured"
+    );
 }
 
 #[test]
@@ -4507,9 +4512,18 @@ fn test_get_yield_tiers_preserves_order() {
     let (tok, tre) = free_addresses(&env);
 
     let mut tiers = SorobanVec::new(&env);
-    tiers.push_back(YieldTier { min_lock_secs: 2_592_000,  yield_bps: 900   });
-    tiers.push_back(YieldTier { min_lock_secs: 7_776_000,  yield_bps: 1_100 });
-    tiers.push_back(YieldTier { min_lock_secs: 15_552_000, yield_bps: 1_400 });
+    tiers.push_back(YieldTier {
+        min_lock_secs: 2_592_000,
+        yield_bps: 900,
+    });
+    tiers.push_back(YieldTier {
+        min_lock_secs: 7_776_000,
+        yield_bps: 1_100,
+    });
+    tiers.push_back(YieldTier {
+        min_lock_secs: 15_552_000,
+        yield_bps: 1_400,
+    });
 
     client.init(
         &admin,
@@ -4555,7 +4569,10 @@ fn test_get_yield_tiers_is_pure_read_no_state_change() {
     let (tok, tre) = free_addresses(&env);
 
     let mut tiers = SorobanVec::new(&env);
-    tiers.push_back(YieldTier { min_lock_secs: 100, yield_bps: 900 });
+    tiers.push_back(YieldTier {
+        min_lock_secs: 100,
+        yield_bps: 900,
+    });
 
     client.init(
         &admin,
@@ -4580,5 +4597,8 @@ fn test_get_yield_tiers_is_pure_read_no_state_change() {
     client.get_yield_tiers();
     let escrow_after = client.get_escrow();
 
-    assert_eq!(escrow_before, escrow_after, "get_yield_tiers must not mutate state");
+    assert_eq!(
+        escrow_before, escrow_after,
+        "get_yield_tiers must not mutate state"
+    );
 }

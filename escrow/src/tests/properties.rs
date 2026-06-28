@@ -1892,8 +1892,14 @@ fn payout_highly_skewed_contributions() {
     let p_large = client.compute_investor_payout(&large);
     let p_small = client.compute_investor_payout(&small);
 
-    assert!(p_large + p_small <= settle_pool, "skewed: aggregate > settle_pool");
-    assert!(settle_pool - p_large - p_small >= 0, "skewed: negative residue");
+    assert!(
+        p_large + p_small <= settle_pool,
+        "skewed: aggregate > settle_pool"
+    );
+    assert!(
+        settle_pool - p_large - p_small >= 0,
+        "skewed: negative residue"
+    );
     // Residue bounded by n_investors (each floor drops at most 1 unit).
     assert!(
         settle_pool - p_large - p_small < 2,

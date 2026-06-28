@@ -2133,4 +2133,3 @@ fn test_post_handover_admin_can_clear_hold_set_by_old_admin() {
     client.clear_legal_hold();
     assert!(!client.get_legal_hold());
 }
-
