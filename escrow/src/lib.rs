@@ -854,16 +854,6 @@ pub struct MaturityUpdatedEvent {
 }
 
 #[contractevent]
-pub struct BeneficiaryRotated {
-    #[topic]
-    pub name: Symbol,
-    #[topic]
-    pub invoice_id: Symbol,
-    pub old_sme: Address,
-    pub new_sme: Address,
-}
-
-#[contractevent]
 pub struct AdminTransferredEvent {
     #[topic]
     pub name: Symbol,
@@ -909,6 +899,23 @@ pub struct AdminProposalCancelled {
     pub cancelled_pending: Address,
 }
 
+/// Emitted by [`LiquifactEscrow::transfer_admin`] (the deprecated one-step
+/// admin transfer shim) so indexers and operators can flag integrators
+/// still using the legacy single-step path.
+///
+/// # Fields
+/// - `name`: hardcoded `depr_xfer` symbol.
+/// - `invoice_id`: escrow invoice identifier.
+/// - `proposed_address`: the address that was passed through the deprecated shim.
+#[contractevent]
+pub struct DeprecatedTransferAdminUsed {
+    #[topic]
+    pub name: Symbol,
+    #[topic]
+    pub invoice_id: Symbol,
+    pub proposed_address: Address,
+}
+
 #[contractevent]
 pub struct FundingTargetUpdated {
     #[topic]
@@ -939,7 +946,10 @@ pub struct LegalHoldClearRequested {
     pub clearable_at: u64,
 }
 
+#[allow(dead_code)]
 #[contractevent]
+/// NOTE: Defined but never emitted — no `update_legal_hold_clear_delay` setter
+/// exists yet.  Marked as dead code; remove or wire up when the feature is added.
 pub struct LegalHoldClearDelayUpdated {
     #[topic]
     pub name: Symbol,
@@ -1446,7 +1456,7 @@ impl LiquifactEscrow {
 
         let has_maturity_lock = maturity != 0;
         EscrowInitialized {
-            name: symbol_short!("escrow"),
+            name: symbol_short!("escrow_ii"),
             escrow: escrow.clone(),
             funding_token,
             treasury,
@@ -4067,43 +4077,6 @@ impl LiquifactEscrow {
         }
     }
 
-    /// Update the SME beneficiary address via dual consent (current SME and admin).
-    ///
-    /// Allowed only in non-terminal states (0 = open, 1 = funded).
-    /// Invariant: after rotation, only the new SME may withdraw/settle.
-    pub fn rotate_beneficiary(env: Env, new_sme: Address) {
-        let mut escrow = Self::get_escrow(env.clone());
-
-        guard_status_in(
-            &env,
-            escrow.status,
-            &[0, 1],
-            EscrowError::RotateBeneficiaryNotOpen,
-        );
-
-        escrow.sme_address.require_auth();
-        escrow.admin.require_auth();
-
-        ensure(
-            &env,
-            escrow.sme_address != new_sme,
-            EscrowError::NewSmeSameAsCurrent,
-        );
-
-        let old_sme = escrow.sme_address.clone();
-        escrow.sme_address = new_sme.clone();
-
-        env.storage().instance().set(&DataKey::Escrow, &escrow);
-
-        BeneficiaryRotated {
-            name: Symbol::new(&env, "BeneficiaryRotated"),
-            invoice_id: escrow.invoice_id.clone(),
-            old_sme,
-            new_sme,
-        }
-        .publish(&env);
-    }
-
     /// Propose a new admin (`PendingAdmin`) — step 1 of a two-step handover.
     ///
     /// Requires current admin authorization. The destination must differ from the current admin.
@@ -4229,7 +4202,14 @@ impl LiquifactEscrow {
     /// integrations to call `propose_admin` followed by `accept_admin`.
     #[deprecated(note = "use propose_admin followed by accept_admin")]
     pub fn transfer_admin(env: Env, new_admin: Address) -> InvoiceEscrow {
-        Self::propose_admin(env.clone(), new_admin, None);
+        let invoice_id = Self::get_escrow(env.clone()).invoice_id;
+        Self::propose_admin(env.clone(), new_admin.clone(), None);
+        DeprecatedTransferAdminUsed {
+            name: symbol_short!("depr_xfer"),
+            invoice_id,
+            proposed_address: new_admin,
+        }
+        .publish(&env);
         Self::get_escrow(env)
     }
 
