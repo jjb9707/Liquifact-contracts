@@ -21,7 +21,7 @@ use super::{
     assert_contract_error, default_init, deploy, deploy_with_id, free_addresses,
     install_stellar_asset_token, setup, StellarTestToken, MAX_DUST_SWEEP_AMOUNT, TARGET,
 };
-use crate::{EscrowError, EscrowSettled, LiquifactEscrow, YieldTier};
+use crate::{EscrowError, EscrowSettled, LiquifactEscrow, SettlementReadiness, YieldTier};
 use soroban_sdk::{
     testutils::{Address as _, Events, Ledger as _},
     token::StellarAssetClient,
@@ -2038,4 +2038,127 @@ fn test_is_settleable_normal_successful() {
     default_init(&client, &env, &admin, &sme);
     fund_to_target(&client, &env);
     assert!(client.is_settleable(), "normal successful is settleable");
+}
+
+// ── get_settlement_readiness bundled view coverage (issue #558) ───────────────
+
+/// Open (not yet funded) escrow with no maturity lock: not settleable, no hold,
+/// maturity vacuously reached, and not ready.
+#[test]
+fn test_settlement_readiness_open_not_ready() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    default_init(&client, &env, &admin, &sme);
+
+    let r = client.get_settlement_readiness();
+    assert_eq!(
+        r,
+        SettlementReadiness {
+            is_settleable: false,
+            legal_hold_active: false,
+            maturity_reached: true, // maturity == 0 ⇒ vacuously reached
+            ready_now: false,
+        }
+    );
+    assert!(!r.ready_now);
+}
+
+/// Funded, no maturity lock, no hold: fully ready, and `ready_now == true` must
+/// predict a successful `settle`.
+#[test]
+fn test_settlement_readiness_funded_ready_predicts_settle() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    default_init(&client, &env, &admin, &sme);
+    fund_to_target(&client, &env);
+
+    let r = client.get_settlement_readiness();
+    assert!(r.is_settleable);
+    assert!(!r.legal_hold_active);
+    assert!(r.maturity_reached);
+    assert!(r.ready_now);
+
+    // Parity: ready_now == true ⇒ settle succeeds on the current ledger.
+    let settled = client.settle();
+    assert_eq!(settled.status, 2);
+}
+
+/// Funded but on legal hold: `legal_hold_active` true and `ready_now` false even
+/// though maturity is reached. A `settle` would fail.
+#[test]
+fn test_settlement_readiness_funded_but_held_blocks_ready() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    default_init(&client, &env, &admin, &sme);
+    fund_to_target(&client, &env);
+
+    client.set_legal_hold(&true);
+
+    let r = client.get_settlement_readiness();
+    assert!(r.legal_hold_active);
+    assert!(r.maturity_reached);
+    assert!(!r.is_settleable, "a legal hold makes the escrow not settleable");
+    assert!(!r.ready_now, "ready_now must be false under an active hold");
+
+    // Parity: ready_now == false ⇒ settle fails.
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.settle();
+    }));
+    assert!(res.is_err(), "settle must fail while a legal hold is active");
+}
+
+/// Funded with a future maturity: pre-maturity `maturity_reached` is false and
+/// `ready_now` is false; after the maturity timestamp both flip true and `settle`
+/// succeeds — exercising the maturity precedence branch.
+#[test]
+fn test_settlement_readiness_maturity_gate_parity() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let client = deploy(&env);
+    let admin = Address::generate(&env);
+    let sme = Address::generate(&env);
+    let (token, treasury) = free_addresses(&env);
+
+    let maturity: u64 = 20_000;
+    client.init(
+        &admin,
+        &String::from_str(&env, "INV_RDY_MAT"),
+        &sme,
+        &TARGET,
+        &800i64,
+        &maturity,
+        &token,
+        &None,
+        &treasury,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
+    fund_to_target(&client, &env);
+
+    // Pre-maturity: not reached, not ready.
+    env.ledger().with_mut(|l| l.timestamp = maturity - 1);
+    let pre = client.get_settlement_readiness();
+    assert!(!pre.maturity_reached);
+    assert!(!pre.is_settleable);
+    assert!(!pre.ready_now);
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.settle();
+    }));
+    assert!(res.is_err(), "settle must fail before maturity");
+
+    // At maturity (inclusive): reached and ready; settle succeeds.
+    env.ledger().with_mut(|l| l.timestamp = maturity);
+    let at = client.get_settlement_readiness();
+    assert!(at.maturity_reached);
+    assert!(at.is_settleable);
+    assert!(at.ready_now);
+    let settled = client.settle();
+    assert_eq!(settled.status, 2);
 }

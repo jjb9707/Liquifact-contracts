@@ -753,6 +753,32 @@ pub struct EscrowSummary {
     pub attestation_log_length: u32,
 }
 
+/// Bundled settlement-readiness snapshot returned by
+/// [`LiquifactEscrow::get_settlement_readiness`].
+///
+/// Lets an integrator decide whether [`LiquifactEscrow::settle`] will succeed on the current
+/// ledger with a single host invocation, instead of stitching together [`LiquifactEscrow::is_settleable`],
+/// [`LiquifactEscrow::get_legal_hold`], [`LiquifactEscrow::has_maturity_lock`], and the maturity
+/// timestamp — and re-deriving the contract's own precedence rules off-chain (which drifts).
+///
+/// # Precedence
+/// `ready_now` is computed from the **same** single-source-of-truth gate `settle`/`partial_settle`
+/// apply (legal hold blocks first, then funded status, then maturity). A `true` value reliably
+/// predicts a successful `settle` on the current ledger.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SettlementReadiness {
+    /// Mirrors [`LiquifactEscrow::is_settleable`]: funded, matured, and not on legal hold.
+    pub is_settleable: bool,
+    /// `true` when a legal/compliance hold is currently active (blocks settlement).
+    pub legal_hold_active: bool,
+    /// `true` when there is no maturity lock (`maturity == 0`) or the maturity timestamp has
+    /// been reached (`now >= maturity`).
+    pub maturity_reached: bool,
+    /// Single derived flag: `true` exactly when `settle` would succeed on the current ledger.
+    pub ready_now: bool,
+}
+
 // --- Events ---
 
 #[contractevent]
@@ -2430,6 +2456,40 @@ impl LiquifactEscrow {
     /// - no active legal hold
     pub fn is_settleable(env: Env) -> bool {
         Self::settleable_now(&env)
+    }
+
+    /// Bundle the settleable flag, legal-hold state, maturity-reached state, and a single derived
+    /// `ready_now` boolean into one [`SettlementReadiness`] result.
+    ///
+    /// Integrators otherwise have to call [`LiquifactEscrow::is_settleable`],
+    /// [`LiquifactEscrow::get_legal_hold`], [`LiquifactEscrow::has_maturity_lock`], and read the
+    /// maturity timestamp separately, then replicate the contract's precedence rules — which drifts
+    /// out of sync and produces confusing UIs ("settleable" but blocked by a legal hold).
+    ///
+    /// # Precedence
+    /// `ready_now` and `is_settleable` are computed from the **same** single-source-of-truth gate
+    /// (`Self::settleable_now`) that [`LiquifactEscrow::settle`] and
+    /// [`LiquifactEscrow::partial_settle`] apply: a legal hold blocks first, then funded status,
+    /// then maturity. A `ready_now == true` value therefore reliably predicts a successful `settle`
+    /// on the current ledger.
+    ///
+    /// # Read-only
+    /// Pure view: no `require_auth`, no storage writes, and no TTL bump.
+    pub fn get_settlement_readiness(env: Env) -> SettlementReadiness {
+        let legal_hold_active = Self::legal_hold_active(&env);
+        let escrow = Self::get_escrow(env.clone());
+        let maturity_reached =
+            escrow.maturity == 0 || env.ledger().timestamp() >= escrow.maturity;
+
+        // Reuse the single-source-of-truth gate so this view cannot drift from `settle`.
+        let is_settleable = Self::settleable_now(&env);
+
+        SettlementReadiness {
+            is_settleable,
+            legal_hold_active,
+            maturity_reached,
+            ready_now: is_settleable,
+        }
     }
 
     /// Record or replace the optional SME collateral commitment metadata.
