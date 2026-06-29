@@ -9,10 +9,12 @@
 #[allow(unused_imports)]
 use super::{
     AttestationDigestAppended, AttestationDigestRevoked, AttestationDigestUnrevoked,
-    CollateralRecordedEvt, DataKey, EscrowError, EscrowFunded, EscrowInitialized,
-    FundingTargetUpdated, LiquifactEscrow, LiquifactEscrowClient, MaxUniqueInvestorsCapLowered,
-    PrimaryAttestationBound, YieldTier, MAX_ATTESTATION_APPEND_ENTRIES, MAX_DUST_SWEEP_AMOUNT,
-    MAX_FUND_BATCH, SCHEMA_VERSION,
+    CollateralRecordedEvt, ContractUpgraded, DataKey, DeprecatedTransferAdminUsed, EscrowError,
+    EscrowFunded, EscrowInitialized, FundingCancelled, FundingTargetUpdated, InvestorRefundedEvt,
+    LiquifactEscrow, LiquifactEscrowClient, MaturityMaxHorizonUpdated,
+    MaxUniqueInvestorsCapLowered, PrimaryAttestationBound, RegistryRefRebound, TreasuryDustSwept,
+    YieldTier, MAX_ATTESTATION_APPEND_ENTRIES, MAX_DUST_SWEEP_AMOUNT, MAX_FUND_BATCH,
+    SCHEMA_VERSION,
 };
 use soroban_sdk::{
     symbol_short,
