@@ -1,7 +1,8 @@
 use super::*;
 use crate::{
     AdminAcceptedEvent, AdminProposalCancelled, AdminProposedEvent, EscrowCloseSnapshot,
-    FundingTargetUpdated, RegistryRefRebound, DEFAULT_MATURITY_MAX_HORIZON_SECS,
+    FundingTargetUpdated, RegistryRefRebound, DEFAULT_ADMIN_PROPOSAL_VALIDITY_SECS,
+    DEFAULT_MATURITY_MAX_HORIZON_SECS,
 };
 
 use soroban_sdk::Event;
@@ -2329,4 +2330,109 @@ fn test_post_handover_admin_can_clear_hold_set_by_old_admin() {
     }]);
     client.clear_legal_hold();
     assert!(!client.get_legal_hold());
+}
+
+// ── propose_admin validity-window override / default-fallback coverage (issue #560) ──
+
+/// Helper: deploy + init an escrow at a known ledger timestamp `now`, returning the
+/// client, current admin, and a fresh successor address.
+///
+/// Centralises the 17-argument `init` boilerplate so the window tests stay focused on
+/// the expiry arithmetic and the inclusive accept boundary.
+fn init_for_propose_window<'a>(
+    env: &'a Env,
+    label: &str,
+    now: u64,
+) -> (LiquifactEscrowClient<'a>, Address, Address) {
+    let (client, admin, sme) = setup(env);
+    env.ledger().set_timestamp(now);
+    client.init(
+        &admin,
+        &soroban_sdk::String::from_str(env, label),
+        &sme,
+        &TARGET,
+        &800i64,
+        &0u64,
+        &Address::generate(env),
+        &None,
+        &Address::generate(env),
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
+    let new_admin = Address::generate(env);
+    (client, admin, new_admin)
+}
+
+/// `propose_admin(.., Some(w))` must store the expiry as exactly `now + w`.
+#[test]
+fn test_propose_admin_explicit_window_stores_now_plus_window() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let now = 1_000u64;
+    let window = 3_600u64;
+    let (client, _admin, new_admin) = init_for_propose_window(&env, "PROP_W_1", now);
+
+    client.propose_admin(&new_admin, &Some(window));
+
+    assert_eq!(client.get_pending_admin_expiry(), Some(now + window));
+}
+
+/// `propose_admin(.., None)` must fall back to `now + DEFAULT_ADMIN_PROPOSAL_VALIDITY_SECS`.
+#[test]
+fn test_propose_admin_default_window_fallback() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let now = 2_500u64;
+    let (client, _admin, new_admin) = init_for_propose_window(&env, "PROP_W_2", now);
+
+    client.propose_admin(&new_admin, &None);
+
+    assert_eq!(
+        client.get_pending_admin_expiry(),
+        Some(now + DEFAULT_ADMIN_PROPOSAL_VALIDITY_SECS)
+    );
+}
+
+/// `accept_admin` must succeed when `ledger.timestamp() == expiry` (inclusive boundary).
+#[test]
+fn test_accept_admin_succeeds_at_exact_expiry_boundary() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let now = 1_000u64;
+    let window = 5_000u64;
+    let expiry = now + window;
+    let (client, _admin, new_admin) = init_for_propose_window(&env, "PROP_W_3", now);
+
+    client.propose_admin(&new_admin, &Some(window));
+
+    // Advance to exactly the stored expiry — accept must still succeed.
+    env.ledger().set_timestamp(expiry);
+    let updated = client.accept_admin();
+    assert_eq!(updated.admin, new_admin);
+    assert_eq!(client.get_pending_admin(), None);
+    assert_eq!(client.get_pending_admin_expiry(), None);
+}
+
+/// `accept_admin` must fail with `AdminProposalExpired` one second past the expiry.
+#[test]
+#[should_panic(expected = "Error(Contract, #85)")]
+fn test_accept_admin_fails_one_second_past_expiry() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let now = 1_000u64;
+    let window = 5_000u64;
+    let expiry = now + window;
+    let (client, _admin, new_admin) = init_for_propose_window(&env, "PROP_W_4", now);
+
+    client.propose_admin(&new_admin, &Some(window));
+
+    // One second past the inclusive boundary — accept must be rejected.
+    env.ledger().set_timestamp(expiry + 1);
+    client.accept_admin();
 }
