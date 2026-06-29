@@ -2012,6 +2012,28 @@ impl LiquifactEscrow {
             .unwrap_or_else(|| Vec::new(&env))
     }
 
+    /// Return the current attestation append-log usage and remaining headroom.
+    ///
+    /// `used` is the number of entries currently stored in the append-only log and
+    /// `remaining` is the number of additional digests that may still be appended before
+    /// [`LiquifactEscrow::append_attestation_digest`] fails with
+    /// [`EscrowError::AttestationAppendLogCapacityReached`] once the log reaches
+    /// [`MAX_ATTESTATION_APPEND_ENTRIES`].
+    ///
+    /// Note: Calling `len()` on the Soroban SDK `Vec` is a cheap host call that does not
+    /// materialize or decode the full vector contents in WebAssembly memory, keeping this
+    /// metadata read highly efficient.
+    pub fn get_attestation_log_stats(env: Env) -> (u32, u32) {
+        let log: Vec<BytesN<32>> = env
+            .storage()
+            .instance()
+            .get(&DataKey::AttestationAppendLog)
+            .unwrap_or_else(|| Vec::new(&env));
+        let used = log.len();
+        let remaining = MAX_ATTESTATION_APPEND_ENTRIES.saturating_sub(used);
+        (used, remaining)
+    }
+
     // --- Persistent per-investor storage helpers ---
     fn get_persistent_investor_contribution(env: &Env, investor: Address) -> i128 {
         env.storage()
