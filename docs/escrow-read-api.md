@@ -55,6 +55,7 @@ re-implementing storage reads to guarantee identical semantics.
 **Attestations:**
 - [get_primary_attestation_hash](#get_primary_attestation_hash--optionbytesn32)
 - [get_attestation_append_log](#get_attestation_append_log--vecbytesn32)
+- [get_attestation_log_stats](#get_attestation_log_stats--u32-u32)
 - [is_attestation_revoked](#is_attestation_revokedindex-u32--bool)
 
 **Collateral Metadata:**

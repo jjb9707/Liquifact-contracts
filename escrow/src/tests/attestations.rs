@@ -133,6 +133,49 @@ fn test_append_log_empty_before_first_append() {
     assert_eq!(client.get_attestation_append_log().len(), 0);
 }
 
+/// The stats view reports zero used entries and the full remaining capacity before any append.
+#[test]
+fn test_attestation_log_stats_empty_before_first_append() {
+    let env = Env::default();
+    let (client, _) = setup_with_init(&env);
+    let (used, remaining) = client.get_attestation_log_stats();
+    assert_eq!(used, 0);
+    assert_eq!(remaining, MAX_ATTESTATION_APPEND_ENTRIES);
+}
+
+/// The stats view tracks partially filled logs without reading the full vector contents.
+#[test]
+fn test_attestation_log_stats_tracks_partial_fill() {
+    let env = Env::default();
+    let (client, _) = setup_with_init(&env);
+    for i in 0u8..5 {
+        client.append_attestation_digest(&digest(&env, i));
+    }
+    let (used, remaining) = client.get_attestation_log_stats();
+    assert_eq!(used, 5);
+    assert_eq!(remaining, MAX_ATTESTATION_APPEND_ENTRIES - 5);
+}
+
+/// The stats view reports full capacity and remains consistent after the capacity error path.
+#[test]
+fn test_attestation_log_stats_full_and_after_capacity_error() {
+    let env = Env::default();
+    let (client, _) = setup_with_init(&env);
+    for i in 0u8..(MAX_ATTESTATION_APPEND_ENTRIES as u8) {
+        client.append_attestation_digest(&digest(&env, i));
+    }
+    let (used, remaining) = client.get_attestation_log_stats();
+    assert_eq!(used, MAX_ATTESTATION_APPEND_ENTRIES);
+    assert_eq!(remaining, 0);
+
+    let result = client.try_append_attestation_digest(&digest(&env, 0xFF));
+    assert_contract_error(result, EscrowError::AttestationAppendLogCapacityReached);
+
+    let (used, remaining) = client.get_attestation_log_stats();
+    assert_eq!(used, MAX_ATTESTATION_APPEND_ENTRIES);
+    assert_eq!(remaining, 0);
+}
+
 /// Single append is stored at index 0.
 #[test]
 fn test_append_single_entry_stored() {
