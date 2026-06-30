@@ -39,6 +39,9 @@ re-implementing storage reads to guarantee identical semantics.
 - [has_maturity_lock](#has_maturity_lock--bool)
 - [get_funding_close_snapshot](#get_funding_close_snapshot--optionfundingclosesnapshot)
 
+**Tier Lookup:**
+- [preview_yield_tier](#preview_yield_tieramount-i128-lock-u64--i64-u64)
+
 **Per-Investor State:**
 - [get_contribution](#get_contributioninvestor-address--i128)
 - [get_unique_funder_count](#get_unique_funder_count--u32)
@@ -53,6 +56,7 @@ re-implementing storage reads to guarantee identical semantics.
 **Attestations:**
 - [get_primary_attestation_hash](#get_primary_attestation_hash--optionbytesn32)
 - [get_attestation_append_log](#get_attestation_append_log--vecbytesn32)
+- [get_attestation_log_stats](#get_attestation_log_stats--u32-u32)
 - [is_attestation_revoked](#is_attestation_revokedindex-u32--bool)
 
 **Collateral Metadata:**
@@ -64,6 +68,7 @@ re-implementing storage reads to guarantee identical semantics.
 
 **Distributed Principal:**
 - [get_distributed_principal](#get_distributed_principal--i128)
+- [get_reconciliation](#get_reconciliation--reconciliationview)
 
 ---
 
@@ -473,6 +478,39 @@ without re-implementing the `unwrap_or` fallback themselves.
 
 ---
 
+## Tier Lookup
+
+### `preview_yield_tier(amount: i128, lock: u64) → (i64, u64)`
+
+**Signature:** `pub fn preview_yield_tier(env: Env, amount: i128, lock: u64) -> (i64, u64)`
+
+Pure read — no auth, no storage writes, safe for simulation.
+
+Returns `(effective_yield_bps, matched_lock_secs)` for a hypothetical first deposit of `amount`
+with `lock` seconds of commitment, using the **exact same tier-selection rule** applied by
+`fund_with_commitment`. This lets a prospective investor see which tier they would receive before
+depositing, without re-implementing the selection logic.
+
+The `amount` parameter mirrors the `fund_with_commitment` signature. In the current release, tier
+selection is lock-only; `amount` is accepted for API parity and forward-compatibility.
+
+**Return values:**
+
+| Condition | `effective_yield_bps` | `matched_lock_secs` |
+|---|---|---|
+| No `YieldTierTable` configured | escrow base `yield_bps` | `0` |
+| `lock == 0` | escrow base `yield_bps` | `0` |
+| `lock` below every tier threshold | escrow base `yield_bps` | `0` |
+| `lock >= min_lock_secs` of a tier | highest qualifying tier's `yield_bps` | that tier's `min_lock_secs` |
+
+> **Note:** this preview reflects the rule applied at **first deposit only**. A follow-on
+> `fund` call does not re-select a tier.
+
+**Security note:** the preview is guaranteed to agree with `fund_with_commitment` because it delegates
+to the same internal `effective_yield_for_commitment` helper — there is no separate selection path.
+
+---
+
 ## Per-Investor State
 
 ### `get_contribution(investor: Address) → i128`
@@ -560,6 +598,47 @@ and [`LiquifactEscrow::withdraw`] for liability-floor enforcement.
 
 ---
 
+## `get_reconciliation() → ReconciliationView`
+
+**Storage keys:** reads `DataKey::Escrow`, `DataKey::DistributedPrincipal`, and
+`DataKey::FundingToken` (then queries the token contract for the live balance).
+
+Returns the contract's full reconciliation position in a single call, so operators
+no longer have to fetch the balance, funded amount, distributed principal, and
+settlement state separately and re-implement the liability arithmetic off-chain
+(see the [Reconciliation relationship](#reconciliation-relationship) above).
+
+```text
+outstanding_liability = max(funded_amount - distributed_principal, 0)
+surplus               = token_balance - outstanding_liability
+```
+
+`outstanding_liability` uses the **identical floor** that
+[`LiquifactEscrow::sweep_terminal_dust`] enforces, so the view and the sweep guard
+can never disagree. `surplus` is the sweepable dust when positive and a deficit
+when negative.
+
+### `ReconciliationView` fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `token_balance` | `i128` | Live SEP-41 funding-token balance held by the contract. |
+| `outstanding_liability` | `i128` | Principal still owed to investors: `max(funded_amount - distributed_principal, 0)`. |
+| `surplus` | `i128` | `token_balance - outstanding_liability`. Positive = sweepable surplus; negative = deficit. |
+
+- **Pure read** — no authorization required, no state mutation.
+- **Never panics on values** — all arithmetic is saturating.
+- Emits [`EscrowError::EscrowNotInitialized`] / [`EscrowError::FundingTokenNotSet`]
+  only when the escrow has not been initialized.
+
+**Security note:** in settled (`2`) and withdrawn (`3`) states `distributed_principal`
+is `0` by design, so `outstanding_liability` reflects the full `funded_amount` and the
+reported `surplus` is never larger than what `sweep_terminal_dust` would actually
+permit (that guard only applies the floor in the cancelled state `4`). The view is
+therefore conservative and can never over-report sweepable funds.
+
+---
+
 ### `is_investor_claimed(investor: Address) → bool`
 
 **Storage key:** `DataKey::InvestorClaimed(investor)` (persistent)  
@@ -598,39 +677,14 @@ Returns `true` when an investor's principal has been returned via `refund` in a 
 
 ---
 
-### `get_claimable_payout(investor: Address) → i128`
-
-**Signature:** `pub fn get_claimable_payout(env: Env, investor: Address) → i128`
-
-On-chain read-only view that returns the **claimable payout** for an investor, applying all gating rules that `claim_investor_payout` uses.
-
-#### Comparison with `compute_investor_payout`
-- `compute_investor_payout` returns the **gross theoretical payout** (no gating applied).
-- This function returns the **net claimable amount** (0 if any gate blocks a claim).
-
-#### Return values
-| Condition | Returns |
-|-----------|---------|
-| Escrow is not yet settled (status != 2) | `0` |
-| Legal hold blocks investor claims | `0` |
-| Investor has already claimed their payout | `0` |
-| Current ledger timestamp is before the investor's claim-not-before time | `0` |
-| All gates passed | Gross payout from `compute_investor_payout` |
-
-#### Authorization
-None — pure read; no auth required, no state mutation.
-
----
-
 ### `get_settlement_pool() → i128`
 
 **Storage keys:** `DataKey::FundingCloseSnapshot`, `DataKey::Escrow`  
 **Signature:** `pub fn get_settlement_pool(env: Env) -> i128`
 
 Returns the **total settlement pool** owed by the SME — the aggregate principal plus base-yield
-coupon the SME must repay to fully satisfy all investors. This is the authoritative on-chain
-view that avoids the rounding divergence that arises when off-chain tooling re-derives the formula
-from raw snapshot fields.
+coupon the SME must repay to fully satisfy all investors. Avoids rounding divergence that arises
+when off-chain tooling re-derives the formula from raw snapshot fields.
 
 #### Formula (floor / truncating integer division)
 
@@ -639,36 +693,32 @@ coupon       = total_principal × yield_bps / 10_000  (floor)
 settle_pool  = total_principal + coupon
 ```
 
-Where `total_principal` is from [`DataKey::FundingCloseSnapshot`] and `yield_bps` is the
-**escrow base yield** from `InvoiceEscrow::yield_bps`.
+Where `total_principal` is from `DataKey::FundingCloseSnapshot` and `yield_bps` is the
+escrow base yield from `InvoiceEscrow::yield_bps`.
 
 #### Yield note
 
-This view uses the escrow **base yield** (`InvoiceEscrow::yield_bps`). Per-investor effective
-yields from `fund_with_commitment` tier selection are reflected individually in
-`compute_investor_payout` but are **not** aggregated here. The result is therefore an
-authoritative lower-bound aggregate that avoids per-investor enumeration; it matches the
-base-yield pool denominator used by all non-tiered investors.
+Uses the escrow **base yield** only. Per-investor effective yields from `fund_with_commitment`
+tier selection are reflected individually in `compute_investor_payout` but are **not** aggregated
+here.
 
 #### Return values
 
 | Condition | Returns |
 |-----------|---------|
-| [`DataKey::FundingCloseSnapshot`] absent (escrow not yet funded) | `0` |
+| `DataKey::FundingCloseSnapshot` absent (escrow not yet funded) | `0` |
 | `total_principal <= 0` (degenerate snapshot) | `0` |
 | Normal funded state | `total_principal + floor(total_principal × yield_bps / 10_000)` |
 
 #### Overflow safety
 
-All intermediate multiplications use `i128::checked_mul`; all divisions use `i128::checked_div`.
-Emits [`EscrowError::ComputePayoutArithmeticOverflow`] (code 129) rather than silently producing
-a wrong value.
+All multiplications use `i128::checked_mul`; all divisions use `i128::checked_div`. Emits
+`EscrowError::ComputePayoutArithmeticOverflow` (code 129) on overflow.
 
 #### Rounding invariant
 
-Because this view uses the same checked arithmetic and floor division as `compute_investor_payout`,
-the sum of all per-investor payouts is guaranteed to be ≤ `get_settlement_pool()`. Any fractional
-residue is swept by `sweep_terminal_dust`.
+Sum of all per-investor `compute_investor_payout` values is guaranteed ≤ `get_settlement_pool()`.
+Any fractional residue is swept by `sweep_terminal_dust`.
 
 #### Authorization
 
@@ -676,59 +726,20 @@ None — pure read; no auth required and no state mutation.
 
 ---
 
-## `preview_fund(investor: Address, amount: i128) → u32`
+## `get_yield_tiers() → Vec<YieldTier>`
 
-**Pure read-only preview** of a deposit call. Runs the same precondition checks as
-`fund()` in the exact same order, without requiring authorization or mutating state.
+**Storage key:** `DataKey::YieldTierTable`
 
-### Return values
+Returns the yield-tier ladder configured at `init`, or an empty `Vec` when no tiers were configured (base yield applies to all investors).
 
-| Code | Meaning |
-|------|---------|
-| `0`  | Deposit would be accepted by `fund()` |
-| `>0` | The numeric [`EscrowError`](escrow-error-messages.md) code that `fund()` would raise first |
+- **Immutable** — set once at `init`; the contract never mutates this key after initialization.
+- **Order** — returned order matches the validated non-decreasing ordering enforced at `init`: `min_lock_secs` strictly increasing, `yield_bps` non-decreasing.
+- **Empty vec** — returned for both "no tiers passed at init" and "legacy instance predating tier support"; callers must not treat an empty result as an error.
+- **Pure read** — no auth required, no state mutation.
 
-### Guard order (matches `fund_impl`)
+### `YieldTier` fields
 
-| Order | Check | Error code |
-|-------|-------|------------|
-| 1 | Amount is positive | `FundingAmountNotPositive` (100) |
-| 2 | Meets `min_contribution` floor (if configured) | `FundingBelowMinContribution` (101) |
-| 3 | Escrow is initialized (reads `DataKey::Escrow`) | — (panics if uninitialized, matching `fund`) |
-| 4 | No active legal hold | `LegalHoldBlocksFunding` (102) |
-| 5 | Escrow status is open (0) | `EscrowNotOpenForFunding` (103) |
-| 6 | Funding deadline not passed | `FundingDeadlinePassed` (164) |
-| 7 | Allowlist gate (if active): investor is allowlisted | `InvestorNotAllowlisted` (104) |
-| 8 | Investor contribution does not overflow | `InvestorContributionOverflow` (105) |
-| 9 | Per-investor cap not exceeded (if configured) | `InvestorContributionExceedsCap` (106) |
-| 10 | Unique-investor cap not reached (if configured, new investors only) | `UniqueInvestorCapReached` (107) |
-| 11 | Total funded-amount does not overflow | `FundedAmountOverflow` (110) |
-
-### Advisory
-
-This is a **read-only preview**. The actual `fund()` call is the source of truth
-and may still revert due to racing state changes (e.g. another transaction fills
-the unique-investor cap or the admin closes funding between the preview and the
-subsequent `fund()` call).
-
-### Security
-
-- **No `require_auth`** — the investor address is not required to sign.
-- **No storage writes** — returns the first failing code without mutating state.
-- **Advisory only** — callers must still handle `fund()` reverting on race conditions.
-
----
-
-## Admin handover views
-
-### `get_pending_admin() → Option<Address>`
-
-**Storage key:** `DataKey::PendingAdmin`
-
-Returns the proposed successor admin waiting for `accept_admin`, or `None` when no handover is in progress.
-
-### `get_pending_admin_expiry() → Option<u64>`
-
-**Storage key:** `DataKey::PendingAdminExpiry`
-
-Returns the ledger timestamp after which `accept_admin` rejects with `AdminProposalExpired` (code 85). Acceptance is allowed while `ledger.timestamp() <= expiry` (inclusive). Absent when no proposal is active.
+| Field | Type | Description |
+|-------|------|-------------|
+| `min_lock_secs` | `u64` | Minimum `committed_lock_secs` an investor must pass to qualify for this tier |
+| `yield_bps` | `i64` | Effective annualized yield in basis points for qualifying investors |
