@@ -42,6 +42,9 @@ Codes are grouped by domain so SDKs can map coarse categories without parsing va
 | Legal-hold clear (two-phase) | 150–152 | Delayed compliance-hold lift workflow | 150, 152 |
 | Beneficiary rotation | 160–162 | Governed SME address rotation | 160, 162 |
 | Funding deadline / balance | 163–164 | Post-deadline funding and contract balance sufficiency | 163, 164 |
+| Operational pause | 180–183 | Lightweight incident-response pause gates | 180, 183 |
+| Read batch views | 203 | Bounded read API batch sizes | 203 |
+| Maturity horizon governance | 204 | Forward-only maturity horizon raise guard | 204 |
 
 See also [`docs/escrow-legal-hold.md`](escrow-legal-hold.md),
 [`docs/ESCROW_BENEFICIARY_ROTATION.md`](ESCROW_BENEFICIARY_ROTATION.md), and
@@ -146,9 +149,15 @@ See also [`docs/escrow-legal-hold.md`](escrow-legal-hold.md),
 | 165 | `ClaimBatchEmpty` | `claim_payouts_batch` | `investors` vec is empty | Pass at least one investor | typed |
 | 166 | `ClaimBatchTooLarge` | `claim_payouts_batch` | `investors` vec exceeds `MAX_CLAIM_BATCH` (32) | Split into smaller batches | typed |
 | 167 | `FundingDeadlinePassed` | `init`, `fund`, `fund_with_commitment`, `fund_batch` | `funding_deadline` configured and `ledger.timestamp()` past deadline | Funding window closed; do not retry deposits | typed |
+| 180 | `PausedBlocksFunding` | `fund`, `fund_with_commitment`, `fund_batch` | operational pause active | Clear the operational pause before funding | typed |
+| 181 | `PausedBlocksSettlement` | `settle` | operational pause active | Clear the operational pause before settlement | typed |
+| 182 | `PausedBlocksWithdrawal` | `withdraw` | operational pause active | Clear the operational pause before withdrawal | typed |
+| 183 | `PausedBlocksInvestorClaims` | `claim_investor_payout` | operational pause active | Clear the operational pause before investor claims | typed |
 | 200 | `PartialSettleUnauthorizedCaller` | `partial_settle` | `caller` is neither `sme_address` nor `admin` | Call as the SME or admin | typed |
 | 201 | `LegalHoldBlocksPartialSettle` | `partial_settle` | legal hold active | Complete legal-hold clear workflow | typed |
 | 202 | `PartialSettleNotOpen` | `partial_settle` | escrow status `!= 0` (open) | Partial settle only while open | typed |
+| 203 | `ContributionReadBatchTooLarge` | `get_contributions` | `investors.len() > MAX_INVESTOR_READ_BATCH` | Split the read into smaller batches | typed |
+| 204 | `HorizonNotRaised` | `raise_maturity_max_horizon` | `new_horizon <= current horizon` | Pass a strictly higher horizon | typed |
 
 ### Legacy panic strings (migration aid)
 
@@ -244,6 +253,12 @@ See also [`docs/escrow-legal-hold.md`](escrow-legal-hold.md),
 | 162 | `New SME address must differ from current beneficiary` |
 | 163 | `Funding deadline has passed` |
 | 164 | `Contract balance below funded amount` |
+| 180 | `Operational pause blocks funding` |
+| 181 | `Operational pause blocks settlement` |
+| 182 | `Operational pause blocks withdrawal` |
+| 183 | `Operational pause blocks investor claims` |
+| 203 | `get_contributions investors vector length exceeds MAX_INVESTOR_READ_BATCH` |
+| 204 | `maturity max horizon was not raised` |
 
 ## Client Guidance
 
@@ -267,6 +282,9 @@ Recommended SDK category mappings:
 | 140–143 | Cancellation or refund failure |
 | 150–152 | Legal-hold clear workflow failure |
 | 160–162 | Beneficiary rotation failure |
+| 180–183 | Operational pause failure |
+| 203 | Read API batch bound failure |
+| 204 | Maturity horizon governance failure |
 
 ## Security Notes
 

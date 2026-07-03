@@ -181,6 +181,9 @@ pub const MAX_INVOICE_AMOUNT: i128 = i128::MAX / 10_000;
 /// Mirrors the spirit of `MAX_ATTESTATION_APPEND_ENTRIES` to limit per-call work.
 pub const MAX_FUND_BATCH: u32 = 50;
 
+/// Upper bound on investor read batches/pages to keep view-call work bounded.
+pub const MAX_INVESTOR_READ_BATCH: u32 = 50;
+
 /// Upper bound on [`LiquifactEscrow::set_investors_allowlisted`] batch size.
 pub const MAX_INVESTOR_ALLOWLIST_BATCH: u32 = 32;
 
@@ -315,6 +318,8 @@ pub enum EscrowError {
     FundingBatchEmpty = 82,
     /// [`LiquifactEscrow::fund_batch`] exceeded [`MAX_FUND_BATCH`].
     FundingBatchTooLarge = 83,
+    /// [`LiquifactEscrow::get_contributions`] exceeded [`MAX_INVESTOR_READ_BATCH`].
+    ContributionReadBatchTooLarge = 203,
     /// [`LiquifactEscrow::update_funding_target`] received a non-positive target.
     TargetNotPositive = 72,
     /// [`LiquifactEscrow::update_funding_target`] called while escrow is not open.
@@ -438,6 +443,15 @@ pub enum EscrowError {
     /// `update_funding_deadline` was called on a non-open escrow (status != 0).
     FundingDeadlineUpdateNotOpen = 171,
 
+    /// [`LiquifactEscrow::fund`] / [`LiquifactEscrow::fund_with_commitment`] blocked by operational pause.
+    PausedBlocksFunding = 180,
+    /// [`LiquifactEscrow::settle`] blocked by operational pause.
+    PausedBlocksSettlement = 181,
+    /// [`LiquifactEscrow::withdraw`] blocked by operational pause.
+    PausedBlocksWithdrawal = 182,
+    /// [`LiquifactEscrow::claim_investor_payout`] blocked by operational pause.
+    PausedBlocksInvestorClaims = 183,
+
     /// [`LiquifactEscrow::lower_min_contribution_floor`] called while escrow is not open.
     FloorLowerNotOpen = 173,
     /// [`LiquifactEscrow::lower_min_contribution_floor`] did not strictly lower the floor.
@@ -451,11 +465,11 @@ pub enum EscrowError {
     LegalHoldBlocksPartialSettle = 201,
     /// [`LiquifactEscrow::partial_settle`] called while escrow is not in open status (`status != 0`).
     PartialSettleNotOpen = 202,
-    MaxPerInvestorCapNotConfigured = 24, // new
-    MaxPerInvestorCapNotRaised = 25,     // new
+    MaxPerInvestorCapNotConfigured = 24,
+    MaxPerInvestorCapNotRaised = 25,
     /// [`LiquifactEscrow::raise_maturity_max_horizon`] received a `new_horizon` that is
     /// not strictly greater than the current stored horizon.
-    HorizonNotRaised = 201,
+    HorizonNotRaised = 204,
 }
 
 #[inline(always)]
@@ -476,7 +490,12 @@ pub(crate) fn ensure(env: &Env, condition: bool, error: EscrowError) {
 /// specific named status check (e.g. [`require_funding_open`]) delegate here so the
 /// exact error code is preserved at every call site.
 #[inline(always)]
-pub(crate) fn guard_status_eq(env: &Env, actual_status: u32, expected_status: u32, error: EscrowError) {
+pub(crate) fn guard_status_eq(
+    env: &Env,
+    actual_status: u32,
+    expected_status: u32,
+    error: EscrowError,
+) {
     ensure(env, actual_status == expected_status, error);
 }
 
@@ -2172,13 +2191,37 @@ impl LiquifactEscrow {
         Self::get_persistent_investor_contribution(&env, investor)
     }
 
+    /// Public API: contributions recorded for `investors` in the same order as the input.
+    ///
+    /// This bounded read batches the same persistent-storage lookup used by
+    /// [`LiquifactEscrow::get_contribution`]. Unknown addresses return `0`.
+    ///
+    /// # Errors
+    /// Panics with [`EscrowError::ContributionReadBatchTooLarge`] when `investors.len()`
+    /// exceeds [`MAX_INVESTOR_READ_BATCH`].
+    pub fn get_contributions(env: Env, investors: Vec<Address>) -> Vec<i128> {
+        let len = investors.len();
+        ensure(
+            &env,
+            len <= MAX_INVESTOR_READ_BATCH,
+            EscrowError::ContributionReadBatchTooLarge,
+        );
+
+        let mut result = Vec::new(&env);
+        for i in 0..len {
+            let investor = investors.get(i).unwrap();
+            result.push_back(Self::get_persistent_investor_contribution(&env, investor));
+        }
+        result
+    }
+
     /// Returns a paginated list of investor addresses who have contributed to this escrow.
     ///
     /// Legacy instances that predate this feature will return an empty list (backward compatible under ADR-007).
     ///
     /// # Arguments
     /// * `start` - The starting index (0-based) of the pagination.
-    /// * `limit` - The maximum number of investor addresses to return (capped at a hard limit of 50).
+    /// * `limit` - The maximum number of investor addresses to return (capped at [`MAX_INVESTOR_READ_BATCH`]).
     ///
     /// # Returns
     /// A `Vec<Address>` containing the investor addresses within the requested page.
@@ -2194,7 +2237,7 @@ impl LiquifactEscrow {
             return Vec::new(&env);
         }
 
-        let actual_limit = limit.min(50);
+        let actual_limit = limit.min(MAX_INVESTOR_READ_BATCH);
         let end = (start + actual_limit).min(len);
 
         let mut result = Vec::new(&env);
@@ -2525,8 +2568,7 @@ impl LiquifactEscrow {
     pub fn get_settlement_readiness(env: Env) -> SettlementReadiness {
         let legal_hold_active = Self::legal_hold_active(&env);
         let escrow = Self::get_escrow(env.clone());
-        let maturity_reached =
-            escrow.maturity == 0 || env.ledger().timestamp() >= escrow.maturity;
+        let maturity_reached = escrow.maturity == 0 || env.ledger().timestamp() >= escrow.maturity;
 
         // Reuse the single-source-of-truth gate so this view cannot drift from `settle`.
         let is_settleable = Self::settleable_now(&env);
@@ -4763,28 +4805,13 @@ impl DefaultMockToken {
         let from_bal = balances
             .get(from.clone())
             .unwrap_or(MOCK_TOKEN_DEFAULT_BALANCE);
-        let to_bal = balances.get(to.clone()).unwrap_or(MOCK_TOKEN_DEFAULT_BALANCE);
+        let to_bal = balances
+            .get(to.clone())
+            .unwrap_or(MOCK_TOKEN_DEFAULT_BALANCE);
         balances.set(from.clone(), from_bal - amount);
         balances.set(to.clone(), to_bal + amount);
         env.storage().instance().set(&key, &balances);
     }
-}
-
-#[inline(always)]
-pub fn guard_status_eq(env: &Env, actual: u32, expected: u32, err: EscrowError) {
-    ensure(env, actual == expected, err);
-}
-
-#[inline(always)]
-pub fn guard_status_in(env: &Env, actual: u32, expected: &[u32], err: EscrowError) {
-    let mut found = false;
-    for e in expected.iter() {
-        if actual == *e {
-            found = true;
-            break;
-        }
-    }
-    ensure(env, found, err);
 }
 
 #[cfg(any(test, feature = "testutils"))]
