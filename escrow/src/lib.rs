@@ -438,6 +438,15 @@ pub enum EscrowError {
     /// `update_funding_deadline` was called on a non-open escrow (status != 0).
     FundingDeadlineUpdateNotOpen = 171,
 
+    /// [`LiquifactEscrow::fund`] / [`LiquifactEscrow::fund_with_commitment`] blocked by operational pause.
+    PausedBlocksFunding = 180,
+    /// [`LiquifactEscrow::settle`] blocked by operational pause.
+    PausedBlocksSettlement = 181,
+    /// [`LiquifactEscrow::withdraw`] blocked by operational pause.
+    PausedBlocksWithdrawal = 182,
+    /// [`LiquifactEscrow::claim_investor_payout`] blocked by operational pause.
+    PausedBlocksInvestorClaims = 183,
+
     /// [`LiquifactEscrow::lower_min_contribution_floor`] called while escrow is not open.
     FloorLowerNotOpen = 173,
     /// [`LiquifactEscrow::lower_min_contribution_floor`] did not strictly lower the floor.
@@ -451,11 +460,11 @@ pub enum EscrowError {
     LegalHoldBlocksPartialSettle = 201,
     /// [`LiquifactEscrow::partial_settle`] called while escrow is not in open status (`status != 0`).
     PartialSettleNotOpen = 202,
-    MaxPerInvestorCapNotConfigured = 24, // new
-    MaxPerInvestorCapNotRaised = 25,     // new
+    MaxPerInvestorCapNotConfigured = 24,
+    MaxPerInvestorCapNotRaised = 25,
     /// [`LiquifactEscrow::raise_maturity_max_horizon`] received a `new_horizon` that is
     /// not strictly greater than the current stored horizon.
-    HorizonNotRaised = 201,
+    HorizonNotRaised = 204,
 }
 
 #[inline(always)]
@@ -4797,23 +4806,6 @@ impl DefaultMockToken {
         balances.set(to.clone(), to_bal + amount);
         env.storage().instance().set(&key, &balances);
     }
-}
-
-#[inline(always)]
-pub fn guard_status_eq(env: &Env, actual: u32, expected: u32, err: EscrowError) {
-    ensure(env, actual == expected, err);
-}
-
-#[inline(always)]
-pub fn guard_status_in(env: &Env, actual: u32, expected: &[u32], err: EscrowError) {
-    let mut found = false;
-    for e in expected.iter() {
-        if actual == *e {
-            found = true;
-            break;
-        }
-    }
-    ensure(env, found, err);
 }
 
 #[cfg(any(test, feature = "testutils"))]
