@@ -1712,10 +1712,7 @@ impl LiquifactEscrow {
     /// zero seconds remaining but is still accepted by `accept_admin`; `now > expiry` also
     /// reports zero and `accept_admin` rejects with [`EscrowError::AdminProposalExpired`].
     pub fn get_pending_admin_remaining_secs(env: Env) -> Option<u64> {
-        let pending: Option<Address> = env.storage().instance().get(&DataKey::PendingAdmin);
-        if pending.is_none() {
-            return None;
-        }
+        let _pending: Address = env.storage().instance().get(&DataKey::PendingAdmin)?;
 
         env.storage()
             .instance()
