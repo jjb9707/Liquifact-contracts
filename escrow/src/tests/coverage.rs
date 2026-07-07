@@ -13,7 +13,7 @@
 use soroban_sdk::{
     symbol_short,
     testutils::{storage::Persistent, Address as _, Events as _, Ledger},
-    Address, BytesN, Env, Error, Event, InvokeError, Symbol, Vec as SorobanVec,
+    Address, BytesN, Env, Error, Event, InvokeError, Symbol, TryIntoVal, Vec as SorobanVec,
 };
 use super::{
     assert_contract_error, default_init, deploy, deploy_with_id, free_addresses,
@@ -5223,12 +5223,12 @@ fn test_event_investor_allowlist_changed_batch_symbol_reuse() {
     };
 
     assert_eq!(
-        event_list.get(0).unwrap(),
+        event_list.get(0).unwrap().clone(),
         expected_a.to_xdr(&env, &contract_id),
         "first batch event must use symbol 'al_set'"
     );
     assert_eq!(
-        event_list.get(1).unwrap(),
+        event_list.get(1).unwrap().clone(),
         expected_b.to_xdr(&env, &contract_id),
         "second batch event must use symbol 'al_set'"
     );
@@ -5305,12 +5305,12 @@ fn test_event_fund_batch_n_events_with_funded_symbol() {
     };
 
     assert_eq!(
-        event_list.get(0).unwrap(),
+        event_list.get(0).unwrap().clone(),
         expected_a.to_xdr(&env, &contract_id),
         "first batch fund event must use symbol 'funded'"
     );
     assert_eq!(
-        event_list.get(1).unwrap(),
+        event_list.get(1).unwrap().clone(),
         expected_b.to_xdr(&env, &contract_id),
         "second batch fund event must use symbol 'funded' with accumulated funded_amount"
     );
@@ -5394,7 +5394,7 @@ fn test_event_revoke_attestation_digests_batch_symbol() {
         index: 0,
     };
     assert_eq!(
-        event_list.get(0).unwrap(),
+        event_list.get(0).unwrap().clone(),
         expected_first.to_xdr(&env, &contract_id),
         "first batch revoke event struct must match"
     );
