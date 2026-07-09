@@ -4495,14 +4495,29 @@ fn test_event_collateral_cleared_struct() {
     );
 
     let asset = Symbol::new(&env, "USDC");
-    client.record_sme_collateral_commitment(&asset, &5000);
+    let commitment = client.record_sme_collateral_commitment(&asset, &5000);
     client.clear_sme_collateral_commitment();
 
-    // CollateralClearedEvt has no name topic ÔÇö only invoice_id as #[topic].
-    // Verify the event exists by checking topic[0].
+    let expected = CollateralClearedEvt {
+        name: symbol_short!("coll_clr"),
+        invoice_id: client.get_escrow().invoice_id,
+        asset,
+        amount: 5000,
+        recorded_at: commitment.recorded_at,
+    };
+    assert_eq!(
+        last_event_name_symbol(&env),
+        Some(symbol_short!("coll_clr")),
+        "CollateralClearedEvt must emit symbol 'coll_clr'"
+    );
     let events = env.events().all();
     let all_events = events.events();
-    assert!(!all_events.is_empty(), "must emit at least one event");
+    let last = all_events.last().unwrap().clone();
+    assert_eq!(
+        last,
+        expected.to_xdr(&env, &contract_id),
+        "CollateralClearedEvt struct must match"
+    );
 }
 
 // ÔöÇÔöÇ SmeWithdrew ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
@@ -5332,20 +5347,20 @@ fn test_all_event_symbols_are_unique_across_struct_types() {
         "escrow_ii", "inv_cap", "raise_cap", "floor_lo", "funded", "ben_rot",
         "part_set", "escrow_sd", "maturity", "admin", "adm_acc", "adm_prop",
         "adm_can", "depr_xfer", "fund_tgt", "legalhld", "lh_req", "coll_rec",
-        "sme_wd", "inv_claim", "fund_can", "refunded", "reg_rebind", "dust_sw",
-        "att_bind", "att_app", "att_rev", "att_unrev", "mtry_max", "al_ena",
-        "al_set", "lh_cancel", "upgrade",
+        "coll_clr", "sme_wd", "inv_claim", "fund_can", "refunded", "reg_rebind",
+        "dust_sw", "att_bind", "att_app", "att_rev", "att_unrev", "mtry_max",
+        "al_ena", "al_set", "lh_cancel", "upgrade",
     ]
     .iter()
     .cloned()
     .collect();
 
-    // 33 unique symbols across 36 defined event structs.
-    // CollateralClearedEvt has no name field, LegalHoldClearDelayUpdated has no hardcoded symbol,
-    // and inv_cap is shared by MaxUniqueInvestorsCapLowered and MaxPerInvestorCapRaised.
+    // 34 unique symbols across 36 defined event structs.
+    // LegalHoldClearDelayUpdated has no hardcoded symbol, and inv_cap is shared
+    // by MaxUniqueInvestorsCapLowered and MaxPerInvestorCapRaised.
     assert_eq!(
         symbols.len(),
-        33,
+        34,
         "each event struct must have a unique name symbol"
     );
 }
