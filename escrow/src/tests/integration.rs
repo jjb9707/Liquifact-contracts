@@ -3,7 +3,7 @@ use super::*;
 use crate::CollateralRecordedEvt;
 use crate::{CollateralRecordedEvt, DataKey, InvoiceEscrow, LegalHoldChanged};
 use soroban_sdk::{
-    contract, contractimpl, vec, IntoVal, Map, MuxedAddress, Symbol, TryFromVal, Val,
+    contract, contractimpl, symbol_short, vec, IntoVal, Map, MuxedAddress, Symbol, TryFromVal, Val,
 };
 
 // External-call and token-integration assumptions that should stay separate
@@ -1204,4 +1204,71 @@ fn test_cancellation_refund_sweep_lifecycle() {
     assert_eq!(client.get_distributed_principal(), 70_000_000i128);
 
     // After all refunds, outstanding is 0.
+}
+// ── Issue #477: rotate_beneficiary end-to-end payout routing ─────────────────
+
+/// End-to-end: dual-auth rotation routes the subsequent SME withdrawal to the new address.
+#[test]
+fn test_rotate_beneficiary_routes_withdrawal_to_new_sme() {
+    use soroban_sdk::testutils::Events as _;
+
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, sme) = setup(&env);
+    let new_sme = Address::generate(&env);
+    let investor = Address::generate(&env);
+    let token = install_stellar_asset_token(&env);
+    let treasury = Address::generate(&env);
+    let escrow_id = deploy_id(&env);
+    let client = LiquifactEscrowClient::new(&env, &escrow_id);
+
+    client.init(
+        &admin,
+        &soroban_sdk::String::from_str(&env, "ROT_E2E"),
+        &sme,
+        &TARGET,
+        &800i64,
+        &0u64,
+        &token.id,
+        &None,
+        &treasury,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
+
+    token.stellar.mint(&investor, &TARGET);
+    token.stellar.approve(
+        &investor,
+        &escrow_id,
+        &TARGET,
+        &(env.ledger().sequence() + 10_000),
+    );
+    client.fund(&investor, &TARGET);
+    token.stellar.mint(&escrow_id, &TARGET);
+
+    let invoice_id = client.get_escrow().invoice_id.clone();
+    client.rotate_beneficiary(&new_sme);
+
+    let contract_id = client.address.clone();
+    assert_eq!(
+        env.events().all().events().last().unwrap().clone(),
+        crate::BeneficiaryRotated {
+            name: symbol_short!("ben_rot"),
+            invoice_id,
+            prior_sme: sme.clone(),
+            new_sme: new_sme.clone(),
+        }
+        .to_xdr(&env, &contract_id)
+    );
+
+    assert_eq!(token.stellar.balance(&sme), 0);
+    client.withdraw();
+    assert_eq!(token.stellar.balance(&new_sme), TARGET);
+    assert_eq!(token.stellar.balance(&sme), 0);
 }
