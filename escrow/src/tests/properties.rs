@@ -2849,7 +2849,7 @@ proptest! {
         let mut total_refunded: i128 = 0;
         for &idx in &order {
             let inv = &investors[idx];
-            let contrib = client.get_contribution(inv.clone());
+            let contrib = client.get_contribution(inv);
             if contrib <= 0 {
                 continue;
             }
@@ -2868,7 +2868,7 @@ proptest! {
         }
 
         for inv in &investors {
-            prop_assert_eq!(client.get_contribution(inv.clone()), 0);
+            prop_assert_eq!(client.get_contribution(inv), 0);
         }
         prop_assert_eq!(client.get_distributed_principal(), funded);
         prop_assert_eq!(total_refunded, funded);
