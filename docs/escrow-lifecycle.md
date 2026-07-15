@@ -181,51 +181,19 @@ their principal:
 5. `DataKey::InvestorRefunded` is set to `true` — `is_investor_refunded()` returns `true`.
 6. A second `refund()` call panics with `"no contribution to refund"` (contribution is 0).
 
-### Batch refund (`refund_batch`)
-
-`refund_batch(investors: Vec<Address>)` processes multiple investor refunds in a single call,
-reducing transaction overhead for cancelled-escrow recovery.
-
-**Semantics:**
-- Each address is processed sequentially with per-investor `require_auth()`
-- All existing [`refund()`](#investor-refund-path-status-4--cancelled) invariants (cancelled-status gate, non-zero contribution,
-  checks-effects-interactions, liability-floor accounting) are enforced per entry
-- Already-refunded entries (where [`DataKey::InvestorRefunded`] is `true`) are **skipped** without
-  failing the batch — this makes the entrypoint idempotent and allows relayer-style retry
-- One `InvestorRefundedEvt` event is emitted per newly-refunded investor
-
-**Capacity:**
-- Batch size must be `> 0` and `<= MAX_REFUND_BATCH` (50 entries)
-- Empty batch panics with [`EscrowError::RefundBatchEmpty`]
-- Oversized batch panics with [`EscrowError::RefundBatchTooLarge`]
-
-**Test coverage** (see `escrow/src/tests/funding.rs`):
-
-| Scenario | Test |
-|----------|------|
-| Batch equals N single refunds (balance, zeroing, markers, DistributedPrincipal) | `test_refund_batch_equals_n_single_refunds` |
-| Already-refunded investors are skipped | `test_refund_batch_skips_already_refunded` |
-| `RefundBatchEmpty` typed error | `test_refund_batch_empty_yields_typed_error` |
-| `RefundBatchTooLarge` typed error | `test_refund_batch_too_large_yields_typed_error` |
-| Exactly MAX_REFUND_BATCH entries succeeds | `test_refund_batch_max_batch_size_succeeds` |
-| Non-investor entry panics | `test_refund_batch_non_investor_panics` |
-| Batch panics in non-cancelled state | `test_refund_batch_panics_in_open_state` |
-| Liability floor preserved with batch refunds | `test_refund_batch_preserves_liability_floor` |
-
 ### Invariants
 
 - Total refunded ≤ `funded_amount` (each investor can only reclaim their own contribution).
 - No double-refund: contribution is zeroed before the token transfer.
 - Balance-delta checks enforced by `external_calls` wrapper (SEP-41 conservation).
-- `refund()` and `refund_batch()` are blocked in all states except `4` (cancelled).
-- Already-refunded entries are safely skipped in `refund_batch()`.
+- `refund()` is blocked in all states except `4` (cancelled).
 
 ### Events emitted
 
 | Event | When |
 |-------|------|
 | `FundingCancelled` | `cancel_funding()` succeeds |
-| `InvestorRefundedEvt` | `refund()` or `refund_batch()` succeeds |
+| `InvestorRefundedEvt` | `refund()` succeeds |
 
 ---
 
@@ -238,7 +206,7 @@ reducing transaction overhead for cancelled-escrow recovery.
 | `cancel_funding()` | Admin only |
 | `set_legal_hold()` | Admin only |
 | `update_maturity()` | Admin only |
-| `extend_funding_deadline()` | Admin only |
+| `update_funding_deadline()` | Admin only |
 | `propose_admin()` | Admin only |
 | `accept_admin()` | Pending admin only |
 
@@ -272,13 +240,12 @@ When `maturity > 0`:
 
 `withdraw()` does **not** check maturity; it is a pull model for SME liquidity.
 
-## Funding deadline extension
+## Funding deadline update
 
-`extend_funding_deadline(new_deadline: u64)` lets the admin move an existing
-funding deadline forward while the escrow is **open** (status == 0) and the
-current funding window has not elapsed.
+`update_funding_deadline(new_deadline: Option<u64>)` allows the admin to set, extend, or clear
+the optional funding deadline while the escrow is **open** (status == 0):
 
-| Status | `extend_funding_deadline` result |
+| Status | `update_funding_deadline` result |
 |--------|----------------------------------|
 | 0 — Open | ✅ Allowed |
 | 1 — Funded | ❌ Panics: "Funding deadline can only be updated in Open state" |
@@ -287,17 +254,21 @@ current funding window has not elapsed.
 | 4 — Cancelled | ❌ Panics: "Funding deadline can only be updated in Open state" |
 
 **Validation rules:**
-- A deadline must already be configured; no-deadline escrows are not shortened by this entrypoint.
-- `new_deadline` must be strictly greater than the stored deadline.
-- If the stored deadline has already passed, the call fails with `FundingDeadlinePassed`.
-- If `maturity > 0`, `new_deadline` must remain strictly before maturity.
+- `Some(d)`: `d` must be strictly greater than the current ledger timestamp (same rule as `init`).
+- `None`: removes the deadline entirely; funding becomes unrestricted by time.
 - `is_funding_expired()` returns `false` when no deadline is set (key absent from storage).
 
-**Events:** `FundingDeadlineExtended` carries `invoice_id`, `old_deadline`, and `new_deadline`.
+**Events:** `FundingDeadlineUpdated` carries `invoice_id`, `prior_deadline`, and `new_deadline`.
 
-This is consistent with the contract's forward-only governance controls: the
-entrypoint is admin-gated, open-state-only, additive, and never shortens the
-funding window.
+This is consistent with `update_funding_target` and `update_maturity`: all three are admin-gated,
+open-state-only setters that emit a typed event with the prior and new values.
+
+## Batch refund recovery
+
+`refund_batch(investors: Vec<Address>)` returns principal to multiple investors in a cancelled escrow
+(status 4), bounded by `MAX_REFUND_BATCH` (50). Each entry requires per-investor authorization and
+emits `InvestorRefundedEvt` on success. Already-refunded investors are skipped without failing the batch.
+
 
 ---
 

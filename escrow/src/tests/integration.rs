@@ -1233,26 +1233,18 @@ fn test_cancellation_refund_sweep_lifecycle() {
 
     // After all refunds, outstanding is 0.
 }
-// ── Issue #477: rotate_beneficiary end-to-end payout routing ─────────────────
+// ── Issue #396: refund_batch ─────────────────────────────────────────────────
 
-/// End-to-end: dual-auth rotation routes the subsequent SME withdrawal to the new address.
 #[test]
-fn test_rotate_beneficiary_routes_withdrawal_to_new_sme() {
-    use soroban_sdk::testutils::Events as _;
-
+fn test_refund_batch_matches_individual_refunds() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, admin, sme) = setup(&env);
-    let new_sme = Address::generate(&env);
-    let investor = Address::generate(&env);
     let token = install_stellar_asset_token(&env);
     let treasury = Address::generate(&env);
-    let escrow_id = deploy_id(&env);
-    let client = LiquifactEscrowClient::new(&env, &escrow_id);
-
     client.init(
         &admin,
-        &soroban_sdk::String::from_str(&env, "ROT_E2E"),
+        &soroban_sdk::String::from_str(&env, "RBATCH"),
         &sme,
         &TARGET,
         &800i64,
@@ -1270,33 +1262,82 @@ fn test_rotate_beneficiary_routes_withdrawal_to_new_sme() {
         &None,
     );
 
-    token.stellar.mint(&investor, &TARGET);
+    let inv_a = Address::generate(&env);
+    let inv_b = Address::generate(&env);
+    let amt_a = 30_000i128;
+    let amt_b = 70_000i128;
+    token.stellar.mint(&inv_a, &amt_a);
+    token.stellar.mint(&inv_b, &amt_b);
     token.stellar.approve(
-        &investor,
-        &escrow_id,
+        &inv_a,
+        &client.address,
+        &amt_a,
+        &(env.ledger().sequence() + 100),
+    );
+    token.stellar.approve(
+        &inv_b,
+        &client.address,
+        &amt_b,
+        &(env.ledger().sequence() + 100),
+    );
+    client.fund(&inv_a, &amt_a);
+    client.fund(&inv_b, &amt_b);
+    token.stellar.mint(&client.address, &(amt_a + amt_b));
+    client.cancel_funding();
+
+    let mut investors = SorobanVec::new(&env);
+    investors.push_back(inv_a.clone());
+    investors.push_back(inv_b.clone());
+    client.refund_batch(&investors);
+
+    assert_eq!(client.get_distributed_principal(), amt_a + amt_b);
+    assert_eq!(token.stellar.balance(&inv_a), amt_a);
+    assert_eq!(token.stellar.balance(&inv_b), amt_b);
+    assert_eq!(client.get_contribution(&inv_a), 0);
+    assert_eq!(client.get_contribution(&inv_b), 0);
+}
+
+#[test]
+fn test_refund_batch_skips_already_refunded() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, sme) = setup(&env);
+    let token = install_stellar_asset_token(&env);
+    let treasury = Address::generate(&env);
+    client.init(
+        &admin,
+        &soroban_sdk::String::from_str(&env, "RBSKIP"),
+        &sme,
         &TARGET,
-        &(env.ledger().sequence() + 10_000),
+        &800i64,
+        &0u64,
+        &token.id,
+        &None,
+        &treasury,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
     );
-    client.fund(&investor, &TARGET);
-    token.stellar.mint(&escrow_id, &TARGET);
-
-    let invoice_id = client.get_escrow().invoice_id.clone();
-    client.rotate_beneficiary(&new_sme);
-
-    let contract_id = client.address.clone();
-    assert_eq!(
-        env.events().all().events().last().unwrap().clone(),
-        crate::BeneficiaryRotated {
-            name: symbol_short!("ben_rot"),
-            invoice_id,
-            prior_sme: sme.clone(),
-            new_sme: new_sme.clone(),
-        }
-        .to_xdr(&env, &contract_id)
+    let inv = Address::generate(&env);
+    token.stellar.mint(&inv, &10_000i128);
+    token.stellar.approve(
+        &inv,
+        &client.address,
+        &10_000i128,
+        &(env.ledger().sequence() + 100),
     );
+    client.fund(&inv, &10_000i128);
+    token.stellar.mint(&client.address, &10_000i128);
+    client.cancel_funding();
+    client.refund(&inv);
 
-    assert_eq!(token.stellar.balance(&sme), 0);
-    client.withdraw();
-    assert_eq!(token.stellar.balance(&new_sme), TARGET);
-    assert_eq!(token.stellar.balance(&sme), 0);
+    let mut investors = SorobanVec::new(&env);
+    investors.push_back(inv.clone());
+    client.refund_batch(&investors);
+    assert_eq!(client.get_distributed_principal(), 10_000i128);
 }

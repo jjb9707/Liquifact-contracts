@@ -207,8 +207,8 @@ pub const MAX_INVOICE_AMOUNT: i128 = i128::MAX / 10_000;
 /// Mirrors the spirit of `MAX_ATTESTATION_APPEND_ENTRIES` to limit per-call work.
 pub const MAX_FUND_BATCH: u32 = 50;
 
-/// Maximum page size for attestation read views (`get_revoked_attestation_digests`, etc.).
-pub const MAX_ATTESTATION_READ_PAGE: u32 = 50;
+/// Upper bound on [`LiquifactEscrow::refund_batch`] entries to keep storage/CPU bounded.
+pub const MAX_REFUND_BATCH: u32 = 50;
 
 /// Upper bound on [`LiquifactEscrow::set_investors_allowlisted`] batch size.
 pub const MAX_INVESTOR_ALLOWLIST_BATCH: u32 = 32;
@@ -486,21 +486,10 @@ pub enum EscrowError {
     PayoutZero = 170,
     /// `update_funding_deadline` was called on a non-open escrow (status != 0).
     FundingDeadlineUpdateNotOpen = 171,
-    /// [`LiquifactEscrow::extend_funding_deadline`] was called with no configured
-    /// deadline, or with a deadline that is not strictly later than the current one.
-    FundingDeadlineNotExtended = 203,
-    /// [`LiquifactEscrow::extend_funding_deadline`] would move the funding deadline
-    /// to or past the escrow maturity timestamp.
-    FundingDeadlineAtOrAfterMaturity = 204,
-
-    /// [`LiquifactEscrow::fund`] / [`LiquifactEscrow::fund_with_commitment`] blocked by operational pause.
-    PausedBlocksFunding = 180,
-    /// [`LiquifactEscrow::settle`] blocked by operational pause.
-    PausedBlocksSettlement = 181,
-    /// [`LiquifactEscrow::withdraw`] blocked by operational pause.
-    PausedBlocksWithdrawal = 182,
-    /// [`LiquifactEscrow::claim_investor_payout`] blocked by operational pause.
-    PausedBlocksInvestorClaims = 183,
+    /// [`LiquifactEscrow::refund_batch`] received an empty investors vector.
+    RefundBatchEmpty = 206,
+    /// [`LiquifactEscrow::refund_batch`] exceeded [`MAX_REFUND_BATCH`].
+    RefundBatchTooLarge = 207,
 
     /// [`LiquifactEscrow::lower_min_contribution_floor`] called while escrow is not open.
     FloorLowerNotOpen = 173,
@@ -5103,16 +5092,55 @@ impl LiquifactEscrow {
     /// refundable contribution, initialized token data is missing, or the refund transfer fails
     /// token-balance invariants.
     pub fn refund(env: Env, investor: Address) {
-        investor.require_auth();
+        Self::refund_impl(&env, investor, false);
+    }
+
+    /// Batch refund for a cancelled escrow: returns principal to multiple investors in one call.
+    ///
+    /// Bounded by [`MAX_REFUND_BATCH`]. Each entry requires per-investor authorization and passes
+    /// the same gates as [`LiquifactEscrow::refund`]. Already-refunded investors (zero contribution)
+    /// are skipped without failing the batch.
+    ///
+    /// Emits one [`InvestorRefundedEvt`] per newly refunded investor.
+    pub fn refund_batch(env: Env, investors: Vec<Address>) {
+        let n = investors.len();
+        ensure(&env, n > 0, EscrowError::RefundBatchEmpty);
+        ensure(
+            &env,
+            n <= MAX_REFUND_BATCH,
+            EscrowError::RefundBatchTooLarge,
+        );
 
         let escrow = Self::get_escrow(env.clone());
         guard_status_eq(&env, escrow.status, 4, EscrowError::RefundNotCancelled);
 
-        let amount: i128 = Self::get_persistent_investor_contribution(&env, investor.clone());
-        ensure(&env, amount > 0, EscrowError::NoContributionToRefund);
+        for i in 0..n {
+            let investor = investors.get(i).unwrap();
+            Self::refund_impl(&env, investor, true);
+        }
+    }
+
+    /// Core refund logic shared by [`LiquifactEscrow::refund`] and [`LiquifactEscrow::refund_batch`].
+    ///
+    /// When `skip_zero_contribution` is `true`, investors with no recorded contribution are
+    /// skipped silently (batch mode). Otherwise a zero contribution fails with
+    /// [`EscrowError::NoContributionToRefund`].
+    fn refund_impl(env: &Env, investor: Address, skip_zero_contribution: bool) {
+        investor.require_auth();
+
+        let escrow = Self::get_escrow(env.clone());
+        guard_status_eq(env, escrow.status, 4, EscrowError::RefundNotCancelled);
+
+        let amount: i128 = Self::get_persistent_investor_contribution(env, investor.clone());
+        if amount <= 0 {
+            if skip_zero_contribution {
+                return;
+            }
+            fail(env, EscrowError::NoContributionToRefund);
+        }
 
         // Zero out contribution before transfer (checks-effects-interactions).
-        Self::set_persistent_investor_contribution(&env, investor.clone(), 0i128);
+        Self::set_persistent_investor_contribution(env, investor.clone(), 0i128);
         env.storage()
             .instance()
             .set(&DataKey::InvestorRefunded(investor.clone()), &true);
@@ -5128,11 +5156,11 @@ impl LiquifactEscrow {
             &prev_distributed.saturating_add(amount),
         );
 
-        let token_addr = Self::funding_token_or_fail(&env);
+        let token_addr = Self::funding_token_or_fail(env);
         let this = env.current_contract_address();
 
         external_calls::transfer_funding_token_with_balance_checks(
-            &env,
+            env,
             &token_addr,
             &this,
             &investor,
@@ -5145,7 +5173,7 @@ impl LiquifactEscrow {
             invoice_id: escrow.invoice_id.clone(),
             amount,
         }
-        .publish(&env);
+        .publish(env);
     }
 
     /// Batch refund entrypoint: refund multiple investors in a single call.
